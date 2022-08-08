@@ -11,7 +11,7 @@ import (
 
 // CheckError prints the message with the prefix and exits with error code 1
 // if the message is nil, it does nothing.
-func CheckError(text string, err error) {
+func CheckError(text string, err any) {
 	if err == nil {
 		return
 	}
