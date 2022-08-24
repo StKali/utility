@@ -9,6 +9,13 @@ import (
 	"unsafe"
 )
 
+var errPrefix = "occurred error"
+
+// SetErrorPrefix set prefix of CheckError output string
+func SetErrorPrefix(prefix string) {
+	errPrefix = prefix
+}
+
 // CheckError prints the message with the prefix and exits with error code 1
 // if the message is nil, it does nothing.
 func CheckError(text string, err any) {

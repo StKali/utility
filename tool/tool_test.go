@@ -126,3 +126,36 @@ func Test2String(t *testing.T) {
 func TestUserHome(t *testing.T) {
 	require.Equal(t, homeDirectory, UserHome())
 }
+
+func TestSerErrorPrefix(t *testing.T) {
+
+	cases := []struct {
+		Name   string
+		Prefix string
+	}{
+		{
+			"empty-string",
+			"",
+		},
+		{
+			"general-string",
+			"Error",
+		},
+		{
+			"contain-space-string",
+			"meet error",
+		},
+		{
+			"contain-line-string",
+			"meet_error",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			old := errPrefix
+			SetErrorPrefix(c.Prefix)
+			require.NotEqual(t, c.Prefix, old)
+		})
+	}
+}
