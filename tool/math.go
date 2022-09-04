@@ -1,8 +1,10 @@
 package tool
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 )
 
@@ -61,7 +63,8 @@ func RandString(n int) string {
 	return string(b)
 }
 
-// RandInternalString returns a random string of length between min and max, consisting of visible ASCII characters only
+// RandInternalString returns a random string of length between min and max, consisting
+// of visible ASCII characters only
 func RandInternalString(min, max int) string {
 	if min > max {
 		max, min = min, max
@@ -70,7 +73,38 @@ func RandInternalString(min, max int) string {
 	return RandString(n)
 }
 
-var emailSuffixes = []string{
+var InvalidEmailSuffixError = errors.New("invalid email suffix, must be startswith '@' and contains '.'")
+
+// RegisterEmailSuffix add an item to the list of email suffixes for generating email addresses
+func RegisterEmailSuffix(suffix ...string) error {
+	if err := validateEmailAddressSuffix(suffix...); err != nil {
+		return err
+	}
+	emailSuffixes = append(emailSuffixes, suffix...)
+	return nil
+}
+
+// SetEmailSuffix set up a list of email suffixes for generating email addresses
+func SetEmailSuffix(suffix ...string) error {
+	if err := validateEmailAddressSuffix(suffix...); err != nil {
+		return err
+	}
+	emailSuffixes = suffix
+	return nil
+}
+
+// validateEmailAddress validate whether the email suffix is valid
+func validateEmailAddressSuffix(suffix ...string) error {
+	for _, suf := range suffix {
+		if suf == "" || suf[0] != '@' || !strings.Contains(suf, ".") {
+			return InvalidEmailSuffixError
+		}
+	}
+	return nil
+}
+
+var emailSuffixes []string
+var defaultEmailSuffixes = []string{
 	"@mock_google.com",
 	"@mock_outlook.com",
 	"@mock_yahoo.com",
@@ -83,7 +117,11 @@ var emailSuffixes = []string{
 // RandEmail returns a random email address
 func RandEmail() string {
 	prefix := RandInternalString(4, 32)
-	return prefix + emailSuffixes[len(prefix)%len(emailSuffixes)]
+	if emailSuffixes == nil {
+		return prefix + defaultEmailSuffixes[len(prefix)%len(defaultEmailSuffixes)]
+	} else {
+		return prefix + emailSuffixes[len(prefix)%len(emailSuffixes)]
+	}
 }
 
 // RandIP returns a random IPv4 address, which may be either private or public

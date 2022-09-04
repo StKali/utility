@@ -1,11 +1,10 @@
 package tool
 
 import (
+	"github.com/stretchr/testify/require"
 	"math/rand"
 	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestRandString(t *testing.T) {
@@ -15,10 +14,15 @@ func TestRandString(t *testing.T) {
 }
 
 func TestRandEmail(t *testing.T) {
+	// not set or register email suffixes
 	for i := 0; i < 100; i++ {
 		email := RandEmail()
 		require.Contains(t, email, "@")
 	}
+
+	// set email suffixes
+	require.NoError(t, SetEmailSuffix("@test.com"))
+	require.True(t, strings.HasSuffix(RandEmail(), "@test.com"))
 }
 
 func TestRandIntervalString(t *testing.T) {
@@ -56,6 +60,66 @@ func TestMax(t *testing.T) {
 	maxInt8 := Max(int8(1), int8(100), int8(111))
 	require.Equal(t, int8(111), maxInt8)
 
+}
+
+var errEmailSuffixCases = []struct {
+	Name   string
+	Suffix string
+}{
+	{
+		"startswith-not-@",
+		"mix.com",
+	},
+	{
+		"no-dot",
+		"@com",
+	},
+	{
+		"empty",
+		"",
+	},
+	{
+		"contains-@-not-startswith",
+		"xx@163.com",
+	},
+	{
+		"startswith-not-@-and-no-dot",
+		"com",
+	},
+}
+
+func TestRegisterEmailSuffix(t *testing.T) {
+
+	// error
+	for _, c := range errEmailSuffixCases {
+		t.Run(c.Name, func(t *testing.T) {
+			require.ErrorIs(t, RegisterEmailSuffix(c.Suffix), InvalidEmailSuffixError)
+		})
+	}
+
+	oldSuffixCount := len(emailSuffixes)
+	// success
+	registered := []string{"@mix.com", "@add.com"}
+	err := RegisterEmailSuffix(registered...)
+	require.NoError(t, err)
+	require.Equal(t, oldSuffixCount+len(registered), len(emailSuffixes))
+	for _, suffix := range registered {
+		require.Contains(t, emailSuffixes, suffix)
+	}
+}
+
+func TestSetEmailSuffix(t *testing.T) {
+	// error
+	for _, c := range errEmailSuffixCases {
+		t.Run(c.Name, func(t *testing.T) {
+			require.ErrorIs(t, SetEmailSuffix(c.Suffix), InvalidEmailSuffixError)
+		})
+	}
+
+	// success
+	newSuffixes := []string{"@hook.com", "@stu.edu"}
+	require.NoError(t, SetEmailSuffix(newSuffixes...))
+	require.Equal(t, newSuffixes, emailSuffixes)
 }
 
 func TestMin(t *testing.T) {
