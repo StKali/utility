@@ -4,6 +4,8 @@
 #vscode files
 .vscode
 
+main.go
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
