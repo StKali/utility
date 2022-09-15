@@ -60,6 +60,9 @@ func TestMax(t *testing.T) {
 	maxInt8 := Max(int8(1), int8(100), int8(111))
 	require.Equal(t, int8(111), maxInt8)
 
+	// empty
+	require.Equal(t, Max([]int{}...), 0)
+
 }
 
 var errEmailSuffixCases = []struct {
@@ -137,4 +140,7 @@ func TestMin(t *testing.T) {
 	// int8
 	minInt8 := Min(int8(122), int8(100), int8(111))
 	require.Equal(t, int8(100), minInt8)
+	
+	// empty
+	require.Equal(t, Min([]int{}...), 0)
 }
