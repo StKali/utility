@@ -31,7 +31,7 @@ func (t trace) Stack(fd io.Writer) {
 	})
 }
 
-func getTrace(skip int) Tracer {
+func GetTrace(skip int) Tracer {
 	pcs := make(trace, depth, depth)
 	count := runtime.Callers(skip, pcs[:])
 	return pcs[:count]
