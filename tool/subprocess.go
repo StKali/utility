@@ -57,7 +57,7 @@ type LightCmd struct {
 	// value in the slice for each duplicate key is used.
 	// As a special case on Windows, SYSTEMROOT is always added if
 	// missing and not explicitly set to the empty string.
-	Env []string
+	Env map[string]string
 
 	// Dir specifies the working directory of the command.
 	// If Dir is the empty string, Run runs the command in the
@@ -900,7 +900,37 @@ func minInt(a, b int) int {
 // the environment, it is returned alongside the best-effort copy.
 func (c *LightCmd) Environ() []string {
 	if c.Env == nil {
-		c.Env = os.Environ()
+		return os.Environ()
 	}
-	return c.Env
+
+	var sb strings.Builder
+	makeItem := func(key, value string) string {
+		sb.Reset()
+		sb.Grow(len(key) + len(value) + 1)
+		sb.WriteString(key)
+		sb.WriteString("=")
+		sb.WriteString(value)
+		return sb.String()
+	}
+	env := os.Environ()
+
+	for i := 0; i < len(env); i++ {
+		envItem := env[i]
+		if index := strings.Index(envItem, "="); index > 0 {
+			key := envItem[:index]
+			if value, ok := c.Env[key]; ok {
+				env[i] = makeItem(key, value)
+				delete(c.Env, key)
+				if len(c.Env) == 0 {
+					return env
+				}
+			}
+		}
+	}
+
+	for key, value := range c.Env {
+		env = append(env, makeItem(key, value))
+	}
+
+	return env
 }
