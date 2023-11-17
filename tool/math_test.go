@@ -30,10 +30,11 @@ func TestRandIntervalString(t *testing.T) {
 		min := rand.Intn(1024)
 		max := min + rand.Intn(1024)
 		str1 := RandInternalString(min, max)
-		str2 := RandInternalString(max, min)
 		require.True(t, len(str1) >= min && len(str1) <= max)
-		require.True(t, len(str2) >= min && len(str2) <= max)
 	}
+
+	require.Equal(t, "", RandInternalString(1, 1))
+	require.Equal(t, "", RandInternalString(-1, 2))
 }
 
 func TestRandIP(t *testing.T) {

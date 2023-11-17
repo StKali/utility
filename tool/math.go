@@ -66,8 +66,8 @@ func RandString(n int) string {
 // RandInternalString returns a random string of length between min and max, consisting
 // of visible ASCII characters only
 func RandInternalString(min, max int) string {
-	if min > max {
-		max, min = min, max
+	if min < 0 || min >= max {
+		return ""
 	}
 	n := min + rand.Intn(max-min)
 	return RandString(n)

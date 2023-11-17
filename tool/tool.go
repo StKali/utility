@@ -1,14 +1,28 @@
 package tool
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"reflect"
-	"sync"
+	"strconv"
+	"strings"
 	"unsafe"
 )
 
+const (
+	_ = 1 << (iota * 10)
+	KB
+	MB
+	GB
+	TB
+	PB
+	EB
+	// ZB
+	// YB
+)
+
+var InvalidMemorySizeError = errors.New("invalid memory size string")
 var errPrefix = "occurred error"
 
 // SetErrorPrefix set prefix of CheckError output string
@@ -24,38 +38,6 @@ func CheckError(text string, err any) {
 	}
 	_, _ = fmt.Fprintf(os.Stderr, "occurred error: %s, err:%+s\n", text, err)
 	os.Exit(1)
-}
-
-var (
-	onceUserHome sync.Once
-	userHome     string
-)
-
-// UserHome return current user home path string
-func UserHome() string {
-	onceUserHome.Do(func() {
-		var err error
-		userHome, err = os.UserHomeDir()
-		CheckError("failed to get user home path", err)
-	})
-	return userHome
-}
-
-// ToAbsPath convert any style path to posix  absolutely path
-func ToAbsPath(path string) string {
-	if filepath.IsAbs(path) {
-		return path
-	}
-
-	if path[0] == '~' {
-		path = UserHome() + path[1:]
-	}
-	var err error
-	path, err = filepath.Abs(path)
-	if err != nil {
-		CheckError("failed to convert path to absolutely", err)
-	}
-	return os.ExpandEnv(path)
 }
 
 // ToString allows zero-copy conversion of a bytes to a string.
@@ -78,4 +60,53 @@ func ToBytes(s string) []byte {
 	sliceHeader.Cap = stringHeader.Len
 	sliceHeader.Len = stringHeader.Len
 	return b
+}
+
+func SizeString2Number(s string) (int64, error) {
+
+	length := len(s)
+	if length == 0 {
+		return 0, nil
+	}
+
+	if s[0] == '-' {
+		return -1, InvalidMemorySizeError
+	}
+
+	index := strings.LastIndexFunc(s, func(r rune) bool {
+		switch r {
+		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			return true
+		}
+		return false
+	})
+	if index == -1 {
+		return -1, InvalidMemorySizeError
+	}
+	sLow := strings.ToLower(s)
+	return toSize(sLow[:index+1], sLow[index+1:])
+}
+
+func toSize(s string, unit string) (int64, error) {
+	base, err := strconv.ParseFloat(s, 0)
+	if err != nil {
+		return -1, InvalidMemorySizeError
+	}
+	switch unit {
+	case "", "b", "byte":
+		return int64(base), nil
+	case "k", "kb", "kib":
+		return int64(base * KB), nil
+	case "m", "mb", "mib":
+		return int64(base * MB), nil
+	case "g", "gb", "gib":
+		return int64(base * GB), nil
+	case "t", "tb", "tib":
+		return int64(base * TB), nil
+	case "p", "pb", "pib":
+		return int64(base * PB), nil
+	case "e", "eb", "eib":
+		return int64(base * EB), nil
+	}
+	return -1, InvalidMemorySizeError
 }

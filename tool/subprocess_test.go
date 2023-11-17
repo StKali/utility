@@ -58,3 +58,12 @@ func TestLightCommandEnviron(t *testing.T) {
 		})
 	}
 }
+
+func TestLightCmdOutput(t *testing.T) {
+	cmd := LightCommand("/bin/pwd")
+	output, err := cmd.Output()
+	require.NoError(t, err)
+	pwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.Equal(t, strings.TrimFunc(ToString(output), unicode.IsSpace), pwd)
+}

@@ -3,24 +3,63 @@ package errors
 import (
 	stderr "errors"
 	"fmt"
+	"github.com/stkali/utility/tool"
 	"io"
 	"runtime"
 )
 
 var Is = stderr.Is
 var As = stderr.As
-var Join = stderr.Join
-
-type errString string
-
-func (e errString) Error() string {
-	return string(e)
-}
 
 type iErr struct {
 	errs      []error
 	argErrNum int
 	Tracer
+}
+
+var _ error = (*iErr)(nil)
+var _ fmt.Formatter = (*iErr)(nil)
+
+func New(text string) error {
+	return &iErr{
+		errs:   []error{stderr.New(text)},
+		Tracer: GetTrace(3),
+	}
+}
+
+func Newf(format string, a ...any) error {
+	err := &iErr{}
+	length := len(a)
+	if length == 0 {
+		return &iErr{
+			errs:      []error{stderr.New(format)},
+			argErrNum: 0,
+			Tracer:    GetTrace(3),
+		}
+	}
+
+	for i := length - 1; i >= 0; i-- {
+		if _, ok := a[i].(error); ok {
+			err.argErrNum++
+		}
+		if err.Tracer == nil {
+			if v, ok := a[i].(*iErr); ok {
+				err.Tracer = v.Tracer
+			}
+		}
+	}
+
+	err.errs = make([]error, 0, err.argErrNum+1)
+	for _, e := range a {
+		if argErr, ok := e.(error); ok {
+			err.errs = append(err.errs, argErr)
+		}
+	}
+	err.errs = append(err.errs, stderr.New(fmt.Sprintf(format, a...)))
+	if err.Tracer == nil {
+		err.Tracer = GetTrace(3)
+	}
+	return err
 }
 
 func (i *iErr) Unwrap() []error {
@@ -36,8 +75,16 @@ func (i *iErr) Is(err error) bool {
 	return false
 }
 
+// Error [inner1, inner2, err(e1, e2), ]
 func (i *iErr) Error() string {
-	return i.errs[i.argErrNum].Error()
+	var b []byte
+	for index, err := range i.errs[i.argErrNum:] {
+		if index > 0 {
+			b = append(b, '\n')
+		}
+		b = append(b, err.Error()...)
+	}
+	return tool.ToString(b)
 }
 
 func (i *iErr) Format(f fmt.State, verb rune) {
@@ -55,26 +102,34 @@ func (i *iErr) Format(f fmt.State, verb rune) {
 	}
 }
 
-var _ error = (*iErr)(nil)
-var _ fmt.Formatter = (*iErr)(nil)
+func Join(errs ...error) error {
 
-func Newf(format string, a ...any) error {
-	err := &iErr{}
-	for _, e := range a {
-		if argErr, ok := e.(error); ok {
-			err.errs = append(err.errs, argErr)
-			err.argErrNum++
+	length := len(errs)
+	if length == 0 {
+		return nil
+	}
+	errCount := 0
+	for i := 0; i < length; i++ {
+		if errs[i] != nil {
+			errCount++
 		}
 	}
-	newErr := errString(fmt.Sprintf(format, a...))
-	err.errs = append(err.errs, newErr)
-	err.Tracer = GetTrace(3)
-	return err
-}
-
-func New(text string) error {
-	return &iErr{
-		errs:   []error{errString(text)},
-		Tracer: GetTrace(3),
+	if errCount == 0 {
+		return nil
 	}
+
+	newErr := &iErr{
+		errs: make([]error, 0, errCount),
+	}
+	for i := 0; i < length; i++ {
+		if newErr.Tracer == nil {
+			if v, ok := errs[i].(*iErr); ok {
+				newErr.Tracer = v.Tracer
+			}
+		}
+		if errs[i] != nil {
+			newErr.errs = append(newErr.errs, errs[i])
+		}
+	}
+	return newErr
 }

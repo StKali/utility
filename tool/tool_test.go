@@ -31,50 +31,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestToAbsPath(t *testing.T) {
-
-	cases := []struct {
-		Name   string
-		Path   string
-		Expect string
-	}{
-		{
-			"current-file",
-			"tool.go",
-			filepath.Join(currentDirectory, "tool.go"),
-		},
-		{
-			"current-directory",
-			".",
-			currentDirectory,
-		},
-		{
-			"relative",
-			"./../Makefile",
-			relativeFile,
-		},
-		{
-			"home",
-			"~",
-			homeDirectory,
-		},
-		{
-			"relative-home",
-			"~/hello.go",
-			filepath.Join(homeDirectory, "hello.go"),
-		},
-		{
-			"absolute",
-			homeDirectory,
-			homeDirectory,
-		},
-	}
-
-	for _, c := range cases {
-		require.Equal(t, c.Expect, ToAbsPath(c.Path))
-	}
-}
-
 func Test2String(t *testing.T) {
 	cases := []struct {
 		Name   string
@@ -123,10 +79,6 @@ func Test2String(t *testing.T) {
 	}
 }
 
-func TestUserHome(t *testing.T) {
-	require.Equal(t, homeDirectory, UserHome())
-}
-
 func TestSerErrorPrefix(t *testing.T) {
 
 	cases := []struct {
@@ -156,6 +108,89 @@ func TestSerErrorPrefix(t *testing.T) {
 			old := errPrefix
 			SetErrorPrefix(c.Prefix)
 			require.NotEqual(t, c.Prefix, old)
+		})
+	}
+}
+
+func TestSizeString2Byte(t *testing.T) {
+	cases := []struct {
+		name   string
+		size   string
+		expect int64
+		err    error
+	}{
+		{
+			"empty",
+			"",
+			0,
+			nil,
+		},
+		{
+			"0b",
+			"0b",
+			0,
+			nil,
+		},
+		{
+			"0k",
+			"0k",
+			0,
+			nil,
+		},
+		{
+			"0G",
+			"0G",
+			0,
+			nil,
+		},
+		{
+			"1k",
+			"1k",
+			1024,
+			nil,
+		},
+		{
+			"1.2k",
+			"1.2k",
+			1228,
+			nil,
+		},
+		{
+			"5.5Kib",
+			"5.5Kib",
+			5632,
+			nil,
+		},
+		{
+			"xxx",
+			"xxx",
+			-1,
+			InvalidMemorySizeError,
+		},
+		{
+			"11111KKK",
+			"111kkk",
+			-1,
+			InvalidMemorySizeError,
+		},
+		{
+			"-1k",
+			"-1k",
+			-1,
+			InvalidMemorySizeError,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			actual, err := SizeString2Number(c.size)
+			if c.err == nil {
+				require.NoError(t, err)
+				require.Equal(t, c.expect, actual)
+			} else {
+				require.Equal(t, c.expect, actual)
+				require.Equal(t, err, c.err)
+			}
 		})
 	}
 }

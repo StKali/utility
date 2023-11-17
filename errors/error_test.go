@@ -98,3 +98,80 @@ type TestStructure struct {
 	Age    int
 	Weight float64
 }
+
+func TestJoinReturnsNil(t *testing.T) {
+	if err := Join(); err != nil {
+		require.Nil(t, err)
+	}
+	if err := Join(nil); err != nil {
+		require.Nil(t, err)
+	}
+	if err := Join(nil, nil); err != nil {
+		require.Nil(t, err)
+	}
+}
+
+func TestJoin(t *testing.T) {
+	err1 := New("err1")
+	err2 := New("err2")
+	cases := []struct {
+		name   string
+		errs   []error
+		expect []error
+	}{
+		{
+			"one error",
+			[]error{err1},
+			[]error{err1},
+		},
+		{
+			"two error",
+			[]error{err1, err2},
+			[]error{err1, err2},
+		},
+		{
+			"not align error",
+			[]error{err1, nil, err2, nil},
+			[]error{err1, err2},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			actual := Join(c.errs...).(interface{ Unwrap() []error }).Unwrap()
+			require.Equal(t, actual, c.expect)
+		})
+	}
+}
+
+func TestJoinErrorMethod(t *testing.T) {
+	err1 := New("err1")
+	err2 := New("err2")
+
+	cases := []struct {
+		name   string
+		errs   []error
+		expect string
+	}{
+		{
+			"simple",
+			[]error{err1},
+			err1.Error(),
+		},
+		{
+			"two",
+			[]error{err1, err2},
+			"err1\nerr2",
+		},
+		{
+			"contain nil",
+			[]error{err1, nil, err2},
+			"err1\nerr2",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			errString := Join(c.errs...).Error()
+			require.Equal(t, c.expect, errString)
+		})
+	}
+}
