@@ -59,6 +59,13 @@ func TestSplitWithExt(t *testing.T) {
 			"",
 			".log",
 		},
+		{
+			"multi point",
+			"file/test.tar.gz",
+			"file/",
+			"test.tar",
+			".gz",
+		},
 	}
 
 	for _, c := range cases {

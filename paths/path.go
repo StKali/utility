@@ -50,7 +50,7 @@ func SplitWithExt(path string) (string, string, string) {
 	i := len(path) - 1
 	etxIndex := -1
 	for i >= len(vol) && !os.IsPathSeparator(path[i]) {
-		if path[i] == '.' {
+		if etxIndex == -1 && path[i] == '.' {
 			etxIndex = i
 		}
 		i--
