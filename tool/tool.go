@@ -36,7 +36,7 @@ func CheckError(text string, err any) {
 	if err == nil {
 		return
 	}
-	_, _ = fmt.Fprintf(os.Stderr, "occurred error: %s, err:%+s\n", text, err)
+	_, _ = fmt.Fprintf(os.Stderr, "%s: %s, err:%+s\n", errPrefix, text, err)
 	os.Exit(1)
 }
 

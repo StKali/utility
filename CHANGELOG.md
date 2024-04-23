@@ -1,3 +1,6 @@
+## 20240423(v1.2.5)
+- fix: calling the SetErrorPrefix function does not work
+
 ## 20231127(v1.2.4)
 - fix: paths.SplitWithExt will use the leftmost dot as the delimiter when there are multiple dots in the file name.
 - feat: returns 0 when the Min and Max parameters is empty
