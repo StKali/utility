@@ -30,6 +30,11 @@ func SetErrorPrefix(prefix string) {
 	errPrefix = prefix
 }
 
+// SetErrorPrefixf set prefix of CheckError output string with args
+func SetErrorPrefixf(s string, args ...any) {
+	SetErrorPrefix(fmt.Sprintf(s, args...))
+}
+
 // CheckError prints the message with the prefix and exits with error code 1
 // if the message is nil, it does nothing.
 func CheckError(text string, err any) {
@@ -37,7 +42,7 @@ func CheckError(text string, err any) {
 		return
 	}
 	_, _ = fmt.Fprintf(os.Stderr, "%s: %s, err:%+s\n", errPrefix, text, err)
-	os.Exit(1)
+	Exit(1)
 }
 
 // ToString allows zero-copy conversion of a bytes to a string.
@@ -110,3 +115,5 @@ func toSize(s string, unit string) (int64, error) {
 	}
 	return -1, InvalidMemorySizeError
 }
+
+var Exit = os.Exit

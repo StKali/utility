@@ -8,7 +8,7 @@ import (
 
 var (
 	disableWarning bool
-	warningPrefix            = "warning: "
+	warningPrefix            = "warning"
 	warningOutput  io.Writer = os.Stderr
 )
 
@@ -27,6 +27,11 @@ func SetWarningPrefix(prefix string) {
 	warningPrefix = prefix
 }
 
+// SetWarningPrefix set the warning message prefix.
+func SetWarningPrefixf(s string, args ... any) {
+	warningPrefix = fmt.Sprintf(s, args...)
+}
+
 func warn(format *string, a ...any) {
 	var msg string
 	if format == nil {
@@ -34,7 +39,11 @@ func warn(format *string, a ...any) {
 	} else {
 		msg = fmt.Sprintf(*format, a...)
 	}
-	_, _ = fmt.Fprint(warningOutput, warningPrefix, msg, "\n")
+	if warningPrefix == "" {
+		_, _ = fmt.Fprintln(warningOutput, msg)
+	} else {
+		_, _ = fmt.Fprintf(warningOutput, "%s: %s\n", warningPrefix, msg)
+	}
 }
 
 // Warning writes all parameters to the specified writable object, ignoring warnings

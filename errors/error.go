@@ -3,13 +3,20 @@ package errors
 import (
 	stderr "errors"
 	"fmt"
-	"github.com/stkali/utility/tool"
 	"io"
+	"os"
 	"runtime"
+
+	"github.com/stkali/utility/tool"
 )
 
-var Is = stderr.Is
-var As = stderr.As
+var (
+	errPrefix           = "occurred error"
+	Is                  = stderr.Is
+	As                  = stderr.As
+	Error               = stderr.New
+	errOutput io.Writer = os.Stderr
+)
 
 type iErr struct {
 	errs      []error
@@ -132,4 +139,33 @@ func Join(errs ...error) error {
 		}
 	}
 	return newErr
+}
+
+// SetErrPrefix set prefix of CheckError output string
+func SetErrPrefix(prefix string) {
+	errPrefix = prefix
+}
+
+// SetErrorPrefixf set prefix of CheckError output string with args
+func SetErrPrefixf(s string, args ...any) {
+	errPrefix = fmt.Sprintf(s, args...)
+}
+
+// SetErrOutput set error output writable.
+func SetErrOutput(writer io.Writer) {
+	errOutput = writer
+}
+
+// CheckError prints the message with the prefix and exits with error code 1
+// if the message is nil, it does nothing.
+func CheckErr(err error) {
+	if err == nil {
+		return
+	}
+	if errPrefix == "" {
+		_, _ = fmt.Fprintln(errOutput, err)
+	} else {
+		_, _ = fmt.Fprintf(errOutput, "%s: %+s\n", errPrefix, err)
+	}
+	tool.Exit(1)
 }

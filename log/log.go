@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"strings"
+
+	"github.com/stkali/utility/tool"
 )
 
 const (
@@ -34,6 +36,12 @@ func (l Level) String() string {
 // ToLevel("Warning") -> WARN
 // ToLevel(ERROR)     -> ERROR
 func ToLevel(level any) Level {
+	return ToLevelWithDefault(level, defaultLevel)
+}
+
+// ToLevelWithDefault returns a legal Level and returns default if the conversion fails.
+// returns def if level is invalid
+func ToLevelWithDefault(level any, def Level) Level {
 	switch level.(type) {
 	case string:
 		return string2Level(level.(string))
@@ -42,7 +50,7 @@ func ToLevel(level any) Level {
 	case int:
 		return Level(level.(int))
 	default:
-		return defaultLevel
+		return def
 	}
 }
 
@@ -134,7 +142,7 @@ func (l *defaultLogger) logf(lv Level, format *string, args ...any) {
 	}
 	_ = l.stdLog.Output(4, msg)
 	if lv == FATAL {
-		os.Exit(1)
+		tool.Exit(1)
 	}
 }
 

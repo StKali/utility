@@ -1,3 +1,6 @@
+## 20240509(v1.2.6)
+- feat: add SetErrFixf, SetWaringf, CheckErr and refactor paths package to support windows
+
 ## 20240423(v1.2.5)
 - fix: calling the SetErrorPrefix function does not work
 

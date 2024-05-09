@@ -1,12 +1,14 @@
 package errors
 
 import (
+	"bytes"
 	stderr "errors"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"os"
 	"regexp"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 var regxMatchErrorHeader = regexp.MustCompile(`(?m)^Error: .*`)
@@ -172,6 +174,88 @@ func TestJoinErrorMethod(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			errString := Join(c.errs...).Error()
 			require.Equal(t, c.expect, errString)
+		})
+	}
+}
+
+func TestSetErrPrefix(t *testing.T) {
+
+	cases := []struct {
+		Name   string
+		Prefix string
+	}{
+		{
+			"empty-string",
+			"",
+		},
+		{
+			"general-string",
+			"Error",
+		},
+		{
+			"contain-space-string",
+			"meet error",
+		},
+		{
+			"contain-line-string",
+			"meet_error",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			old := errPrefix
+			SetErrPrefix(c.Prefix)
+			require.NotEqual(t, c.Prefix, old)
+		})
+	}
+}
+
+func TestSetErrPrefixf(t *testing.T) {
+
+	old := errPrefix
+	SetErrPrefixf("%s err", "program")
+	require.NotEqual(t, fmt.Sprintf("%s err", "program"), old)
+}
+
+func TestCheckErr(t *testing.T) {
+
+	testErr := Error("test error")
+	output := &bytes.Buffer{}
+
+	cases := []struct {
+		name   string
+		prefix string
+		err    error
+		expect string
+	}{
+		{
+			"empty error",
+			"prefix",
+			nil,
+			"",
+		},
+		{
+			"test error",
+			"prefix",
+			testErr,
+			"prefix: test error\n",
+		},
+		{
+			"no preifx",
+			"",
+			testErr,
+			"test error\n",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			SetErrPrefix(c.prefix)
+			SetErrOutput(output)
+			output.Reset()
+			CheckErr(c.err)
+			require.Equal(t, c.expect, output.String())
 		})
 	}
 }

@@ -17,6 +17,7 @@ func TestToLevel(t *testing.T) {
 		{"levevl->info", INFO, INFO},
 		{"integer->trace", 0, TRACE},
 		{"string->debug", "debug", DEBUG},
+		{"string->trace", "trace", TRACE},
 		{"string->info", "info", INFO},
 		{"string->warning", "warning", WARN},
 		{"string->error", "error", ERROR},
@@ -150,6 +151,14 @@ func TestLevelLimit(t *testing.T) {
 			"\n",
 		},
 		{
+			"fatal",
+			FATAL,
+			[]any{},
+			"\n",
+			"",
+			"\n",
+		},
+		{
 			"> error",
 			Level(100),
 			[]any{"beyond"},
@@ -257,6 +266,38 @@ func checkOutput(t *testing.T, level Level, args []any, expectArgs string, forma
 		require.Equal(t, "", recorder.String())
 	}
 
+	if level > FATAL {
+		Trace(args...)
+		require.Equal(t, "", recorder.String())
+		Tracef(format, args...)
+		require.Equal(t, "", recorder.String())
+
+		Debug(args...)
+		require.Equal(t, "", recorder.String())
+		Debugf(format, args...)
+		require.Equal(t, "", recorder.String())
+
+		Info(args...)
+		require.Equal(t, "", recorder.String())
+		Infof(format, args...)
+		require.Equal(t, "", recorder.String())
+
+		Warn(args...)
+		require.Equal(t, "", recorder.String())
+		Warnf(format, args...)
+		require.Equal(t, "", recorder.String())
+
+		Error(args...)
+		require.Equal(t, "", recorder.String())
+		Errorf(format, args...)
+		require.Equal(t, "", recorder.String())
+
+		Fatal(args...)
+		require.Equal(t, "", recorder.String())
+		Fatalf(format, args...)
+		require.Equal(t, "", recorder.String())
+	}
+
 	if level < TRACE {
 		recorder.Reset()
 		Trace(args...)
@@ -305,6 +346,15 @@ func checkOutput(t *testing.T, level Level, args []any, expectArgs string, forma
 		recorder.Reset()
 		Errorf(format, args...)
 		require.Equal(t, ERROR.String()+expectFormat, recorder.String())
+	}
+	if level < FATAL {
+		recorder.Reset()
+		Fatal(args...)
+		require.Equal(t, FATAL.String()+expectArgs, recorder.String())
+
+		recorder.Reset()
+		Fatalf(format, args...)
+		require.Equal(t, FATAL.String()+expectFormat, recorder.String())
 	}
 }
 

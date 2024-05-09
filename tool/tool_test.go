@@ -79,7 +79,7 @@ func Test2String(t *testing.T) {
 	}
 }
 
-func TestSerErrorPrefix(t *testing.T) {
+func TestSetErrorPrefix(t *testing.T) {
 
 	cases := []struct {
 		Name   string
@@ -159,6 +159,30 @@ func TestSizeString2Byte(t *testing.T) {
 			"5.5Kib",
 			"5.5Kib",
 			5632,
+			nil,
+		},
+		{
+			"100.01mb",
+			"100.01mb",
+			104868085,
+			nil,
+		},
+		{
+			"1tb",
+			"1tb",
+			1 << 40,
+			nil,
+		},
+		{
+			"1pb",
+			"1pb",
+			1 << 50,
+			nil,
+		},
+		{
+			"1eb",
+			"1eb",
+			1 << 60,
 			nil,
 		},
 		{

@@ -3,8 +3,9 @@ package errors
 import (
 	"bytes"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestWarning(t *testing.T) {
@@ -25,25 +26,25 @@ func TestWarning(t *testing.T) {
 			"prefix",
 			[]any{"this is warning"},
 			"prefix: this is warning\n",
-			"prefix: ",
+			"prefix",
 		},
 		{
 			"type int",
 			[]any{100},
 			"warning: 100\n",
-			"warning: ",
+			"warning",
 		},
 		{
 			"type point",
 			[]any{&struct{}{}},
 			"warning: &{}\n",
-			"warning: ",
+			"warning",
 		},
 		{
 			"type 2 point",
 			[]any{&struct{}{}, nil},
 			"warning: &{} <nil>\n",
-			"warning: ",
+			"warning",
 		},
 	}
 	for _, c := range cases {
@@ -98,10 +99,20 @@ func TestWarningf(t *testing.T) {
 			SetWarningPrefix(c.prefix)
 			Warningf(c.format, c.args...)
 			payload := fmt.Sprintf(c.format, c.args...)
-			expect := fmt.Sprintf("%s%s\n", c.prefix, payload)
+			expect := fmt.Sprintf("%s: %s\n", c.prefix, payload)
 			actual := out.String()
 			require.Equal(t, expect, actual)
 		})
 	}
 
+}
+
+func TestSetWarningPrefixf(t *testing.T) {
+
+	SetWarningPrefixf("%s warnings", "name")
+	writer := &bytes.Buffer{}
+	SetWarningOutput(writer)
+	warningMsg := "this is warning message"
+	Warning(warningMsg)
+	require.Equal(t, fmt.Sprintf("name warnings: %s\n", warningMsg), writer.String())
 }

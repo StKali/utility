@@ -566,12 +566,8 @@ func (d *DurationRotateFile) montRotateFile(file string) error {
 		return errors.Newf("failed to open file: %q, err: %s", file, err)
 	}
 	// open the leftover rotating file
-	created, err := paths.GetFdCreated(info)
-	if err != nil {
-		return err
-	}
 	now := time.Now()
-	expired := created.Add(d.duration)
+	expired := paths.GetFdCreated(info).Add(d.duration)
 	// use the leftover file if it is not expired
 	if expired.After(now) {
 		// update rotate timer
