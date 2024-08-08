@@ -106,3 +106,41 @@ func TestIsExisted(t *testing.T) {
 	defer f.Close()
 	require.True(t, IsExisted(testFile))
 }
+
+func TestUserHome(t *testing.T) {
+	require.Equal(t, homeDirectory, UserHome())
+}
+
+func TestToAbsPath(t *testing.T) {
+
+	cases := []struct {
+		Name   string
+		Path   string
+		Expect string
+	}{
+		{
+			"current-file",
+			"tool.go",
+			filepath.Join(currentDirectory, "tool.go"),
+		},
+		{
+			"current-directory",
+			".",
+			currentDirectory,
+		},
+		{
+			"home",
+			"~",
+			homeDirectory,
+		},
+		{
+			"relative-home",
+			"~/hello.go",
+			filepath.Join(homeDirectory, "hello.go"),
+		},
+	}
+
+	for _, c := range cases {
+		require.True(t, c.Expect == ToAbsPath(c.Path))
+	}
+}

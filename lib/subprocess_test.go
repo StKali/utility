@@ -1,11 +1,12 @@
-package tool
+package lib
 
 import (
-	"github.com/stretchr/testify/require"
 	"os"
 	"strings"
 	"testing"
 	"unicode"
+
+	"github.com/stretchr/testify/require"
 )
 
 func setEnv(env []string, key, value string) []string {

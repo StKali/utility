@@ -3,16 +3,44 @@ package paths
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/stkali/utility/errors"
-	"github.com/stkali/utility/tool"
 )
 
 var (
-	ToAbsPath = tool.ToAbsPath
-	UserHome  = tool.UserHome
+	onceUserHome sync.Once
+	userHome string
+	
 )
+
+// UserHome return current user home path string
+func UserHome() string {
+	onceUserHome.Do(func() {
+		var err error
+		userHome, err = os.UserHomeDir()
+		errors.CheckErr(err)
+	})
+	return userHome
+}
+
+// ToAbsPath convert any style path to posix  absolutely path
+func ToAbsPath(path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+
+	if path[0] == '~' {
+		path = UserHome() + path[1:]
+	}
+	var err error
+	path, err = filepath.Abs(path)
+	if err != nil {
+		errors.Exitf(1, "failed to convert path to absolutely, err: %s", err)
+	}
+	return os.ExpandEnv(path)
+}
 
 // GetFileCreated get the creation time of the file through the file name.
 func GetFileCreated(file string) (t time.Time, err error) {
@@ -23,26 +51,10 @@ func GetFileCreated(file string) (t time.Time, err error) {
 	return GetFdCreated(info), nil
 }
 
-// // GetFdCreated get the creation time of the file through the fd *os.FileInfo.
-// func GetFdCreated(fd os.FileInfo) (time.Time, error) {
-// 	st := fd.Sys().(*syscall.Stat_t)
-// 	stValue := reflect.ValueOf(st).Elem()
-
-// 	// linux
-// 	cTimeValue := stValue.FieldByName("Ctim")
-// 	if cTimeValue.Kind() != reflect.Invalid {
-// 		timeSpec := cTimeValue.Interface().(syscall.Timespec)
-// 		return time.Unix(timeSpec.Sec, timeSpec.Nsec), nil
-// 	}
-// 	// mac
-// 	cTimeValue = stValue.FieldByName("Ctimespec")
-// 	if cTimeValue.Kind() != reflect.Invalid {
-// 		timeSpec := cTimeValue.Interface().(syscall.Timespec)
-// 		return time.Unix(timeSpec.Sec, timeSpec.Nsec), nil
-// 	}
-// 	return time.Time{}, errors.Newf("failed to get file created time")
-// }
-
+// SplitWithExt splits a file path into three parts: the volume name (if any), the directory and filename without extension,
+// and the file extension. It handles paths with and without extensions gracefully.
+// It returns the volume name, the directory and filename without extension, and the file extension respectively.
+// If the path does not contain an extension, the extension part will be an empty string.
 func SplitWithExt(path string) (string, string, string) {
 	vol := filepath.VolumeName(path)
 	i := len(path) - 1
@@ -59,6 +71,8 @@ func SplitWithExt(path string) (string, string, string) {
 	return path[:i+1], path[i+1 : etxIndex], path[etxIndex:]
 }
 
+// IsExisted checks if a file or directory exists at the given path.
+// It returns true if the path exists, false otherwise.
 func IsExisted(file string) bool {
 	_, err := os.Stat(file)
 	return err == nil || os.IsExist(err)

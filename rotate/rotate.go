@@ -1,7 +1,16 @@
-package log
+// Rotated files can be sharded based on time and size, and the writing efficiency
+// of rotated files is almost the same as that of native files.
+//	==============================================================
+//	name                              times           ns/op
+//	--------------------------------------------------------------
+//	system_file_write-10         	  808066	      1503
+//	size_rotate_write-10  	          696607	      1484
+//	duration_rotate_write-10      	  748053	      1481
+//	==============================================================
+
+package rotate
 
 import (
-	stderr "errors"
 	"io"
 	"os"
 	"sort"
@@ -41,79 +50,60 @@ const (
 	defaultModePerm         = 0o644
 )
 
-var InvalidDurationError = stderr.New("invalid duration (must be >= 0)")
-var InvalidSizeError = stderr.New("invalid size (must be > 0)")
-var InvalidAgeError = stderr.New("invalid Age (must be >= 0)")
-var InvalidBackupsError = stderr.New("invalid backups (must be >= 0)")
-var InvalidTimeFormatError = stderr.New("invalid time format string")
-var InvalidRotateFileError = stderr.New("invalid rotating file")
+var InvalidDurationError = errors.Error("invalid duration (must be >= 0)")
+var ResetTimerError = errors.Error("failed to reset timer")
+var InvalidSizeError = errors.Error("invalid size (must be > 0)")
+var InvalidAgeError = errors.Error("invalid Age (must be >= 0)")
+var InvalidBackupsError = errors.Error("invalid backups (must be >= 0)")
+var InvalidTimeFormatError = errors.Error("invalid time format string")
+var InvalidRotateFileError = errors.Error("invalid rotating file")
 
+// baseRotateFile is a foundational struct for implementing log file rotation functionality.
+// It provides the basic mechanisms and configuration options for rotating log files based on various criteria.
 type baseRotateFile struct {
-	// filenameTime suffix format string
+	// backupTimeFormat specifies the format string used to generate the timestamp suffix for backup files.
+	// This format is applied to the current time when a log file is rotated to create a unique backup filename.
 	backupTimeFormat string
-	// the number of copies of the file that can be retained
+
+	// backups defines the maximum number of backup files that can be retained after rotation.
+	// When this limit is reached, the oldest backup file will be deleted to make room for new ones.
 	backups int
-	// the directory where the rotating file is saved
+
+	// folder specifies the directory where the rotating log file and its backups are saved.
 	folder string
-	// filename and backup file prefix
+
+	// name is the prefix used for the main log file and its backup files.
+	// The backup files will have a timestamp suffix appended to this prefix.
 	name string
-	// filename extension
+
+	// ext is the file extension used for the log file and its backups.
+	// This allows for easy identification of the file type.
 	ext string
-	// the writable object that is currently rotating
+
+	// fd is the current file descriptor (io.WriteCloser) that is being written to.
+	// It represents the currently active log file.
 	fd io.WriteCloser
-	// mutex ensures that the merger and penalty calls will not cause data insecurity problems
+
+	// mtx is a mutex that ensures thread-safe access to the struct's fields and methods.
+	// It prevents data races and ensures that log rotation and writing operations are synchronized.
 	mtx sync.Mutex
-	// mark if there is currently a GC task being executed
-	_cleaning AtomicBool
-	// since it is expensive to clean up a backup, creating asynchronous processing will be the
-	// preferred solution
+
+	// _cleaning (using an underscore prefix to avoid accidental use as a public field)
+	// is an atomic.Bool that indicates whether a garbage collection (cleanup) task is currently being executed.
+	// This allows for safe and efficient cleanup of old backup files.
+	_cleaning atomic.Bool
+
+	// block specifies whether backup file cleanup should be performed synchronously or asynchronously.
+	// If true, cleanup will be performed in a separate goroutine to avoid blocking the main logging thread.
 	block bool
-	// the maximum time for a dungeon to be born and wrong
+
+	// age defines the maximum age that a backup file can have before it is considered for cleanup.
+	// Files older than this duration will be deleted during the cleanup process.
 	age time.Duration
-	// the default permission bit when creating a rotating file
+
+	// modePerm specifies the default file permission bits used when creating new log files.
+	// This ensures that the log files are created with the desired security settings.
 	modePerm os.FileMode
-}
-
-// noCopy may be added to structs which must not be copied
-// after the first use.
-//
-// See https://golang.org/issues/8005#issuecomment-190753527
-// for details.
-//
-// Note that it must not be embedded, due to the Lock and Unlock methods.
-type noCopy struct{}
-
-// Lock is a no-op used by -copylocks checker from `go vet`.
-func (*noCopy) Lock()   {}
-func (*noCopy) Unlock() {}
-
-// A Bool is an atomic boolean value.
-// The zero value is false.
-type AtomicBool struct {
-	_ noCopy
-	v uint32
-}
-
-// Load atomically loads and returns the value stored in x.
-func (x *AtomicBool) Load() bool { return atomic.LoadUint32(&x.v) != 0 }
-
-// Store atomically stores val into x.
-func (x *AtomicBool) Store(val bool) { atomic.StoreUint32(&x.v, b32(val)) }
-
-// Swap atomically stores new into x and returns the previous value.
-func (x *AtomicBool) Swap(new bool) (old bool) { return atomic.SwapUint32(&x.v, b32(new)) != 0 }
-
-// CompareAndSwap executes the compare-and-swap operation for the boolean value x.
-func (x *AtomicBool) CompareAndSwap(old, new bool) (swapped bool) {
-	return atomic.CompareAndSwapUint32(&x.v, b32(old), b32(new))
-}
-
-// b32 returns a uint32 0 or 1 representing b.
-func b32(b bool) uint32 {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 // newBaseRotateFile create a new baseRotateFile
@@ -184,8 +174,11 @@ func (b *baseRotateFile) SetBackupTimeFormat(format string) error {
 
 // validateTimeFormat validates time format string
 func validateTimeFormat(format string) bool {
+	if len(format) == 0 {
+		return false
+	}
 	for i := range format {
-		if '0' <= format[i] && format[i] <= '6'{
+		if '0' <= format[i] && format[i] <= '6' {
 			return true
 		}
 	}
@@ -208,7 +201,10 @@ func (b *baseRotateFile) DropRotateFiles() error {
 	// add current filename to rotate file slice
 	fs = append(fs, b.filename())
 	for _, file := range fs {
-		err = errors.Join(err, os.Remove(file))
+		delErr := os.Remove(file)
+		if !os.IsNotExist(delErr) {
+			err = errors.Join(err, delErr)
+		}
 	}
 	return err
 }
@@ -218,11 +214,9 @@ func (b *baseRotateFile) DropRotateFiles() error {
 // name from 1 to prevent file overwrite. After rotating, create a new rotating
 // file to replace the original file object.
 func (b *baseRotateFile) rotate() error {
-
 	if err := b.close(); err != nil {
 		return err
 	}
-
 	// changed the old rotating file
 	filename, backupFile := b.filename(), b.backupFile()
 	if _, err := os.Stat(backupFile); err == nil {
@@ -294,7 +288,6 @@ func (b *baseRotateFile) backupName(t time.Time) string {
 
 // makeRotateFile creates a new rotating file
 func (b *baseRotateFile) makeRotateFile(filename string) error {
-
 	err := os.MkdirAll(b.folder, os.ModePerm)
 	if err != nil {
 		return errors.Newf("failed to create new log file: %s, err: %s", filename, err)
@@ -330,7 +323,6 @@ func (b *baseRotateFile) isRotatingFile(name string) bool {
 
 // getBackupFiles returns a list of all current backup files
 func (b *baseRotateFile) getBackupFiles() ([]string, error) {
-
 	fs, err := os.ReadDir(b.folder)
 	if err != nil {
 		return nil, errors.Newf("cannot read log folder: %s, err: %s", b.folder, err)
@@ -354,7 +346,6 @@ func (b *baseRotateFile) getBackupFiles() ([]string, error) {
 
 // clean clean up expired backup files
 func (b *baseRotateFile) clean() error {
-
 	if b.backups == 0 && b.age == 0 {
 		return nil
 	}
@@ -372,7 +363,6 @@ func (b *baseRotateFile) clean() error {
 
 // cleanByBackups expiring backup files are cleaned up based on the number of backup
 func (b *baseRotateFile) cleanByBackups(orderBackups []string) ([]string, error) {
-
 	if b.backups == 0 || len(orderBackups) < b.backups {
 		return orderBackups, nil
 	}
@@ -407,7 +397,6 @@ func (b *baseRotateFile) cleanByAges(backups []string) (err error) {
 // checks whether there is any goroutine performing the cleaning operation.
 // If so, abandon the cleanup. If not, start the cleanup.
 func (b *baseRotateFile) cleanBackups(block bool) error {
-
 	// existed a running cleanup goroutine
 	if !b._cleaning.CompareAndSwap(false, true) {
 		return nil
@@ -436,12 +425,18 @@ func (b *baseRotateFile) useLeftoverFile(filename string) error {
 	return nil
 }
 
-// DurationRotateFile ...
+// DurationRotateFile represents a file rotation mechanism based on a specified time duration.
+// It utilizes a timer to automatically create new files for data logging or storage
+// at regular intervals, allowing for the management of large or continuously growing files.
 type DurationRotateFile struct {
-	// time granularity of backup
-	duration time.Duration
 	baseRotateFile
-	// rotating timer
+	// duration specifies the time interval after which a new file should be created
+	// for further data logging or storage. This value represents the duration between
+	// file rotations.
+	duration time.Duration
+	// timer is a pointer to a time.Timer that is used to schedule the next file rotation
+	// based on the duration specified. When the timer expires, a new file is created
+	// and the timer is reset for the next rotation.
 	timer *time.Timer
 }
 
@@ -449,20 +444,16 @@ var _ RotateFiler = (*DurationRotateFile)(nil)
 
 // NewDurationRotateFile create a duration rotating file object.
 func NewDurationRotateFile(file string, duration time.Duration) (*DurationRotateFile, error) {
-
 	if duration < 0 {
 		return nil, InvalidDurationError
 	}
-
 	if duration < time.Hour {
 		errors.Warning("duration < 1 hour, it will created lots of backup files")
 	}
-
 	f := &DurationRotateFile{
 		duration:       duration,
 		baseRotateFile: newBaseRotateFile(),
 	}
-
 	if file != "" {
 		file = paths.ToAbsPath(file)
 		if info, err := os.Stat(file); err == nil && info.IsDir() {
@@ -470,7 +461,6 @@ func NewDurationRotateFile(file string, duration time.Duration) (*DurationRotate
 		}
 		f.folder, f.name, f.ext = paths.SplitWithExt(file)
 	}
-
 	go func() {
 		for {
 			if f.timer != nil {
@@ -516,13 +506,14 @@ func (d *DurationRotateFile) Rotate(block bool) error {
 	return d.rotate(block)
 }
 
-// rotate rotate file and reset timer
+// rotate file and reset timer
 func (d *DurationRotateFile) rotate(block bool) error {
-
 	if err := d.baseRotateFile.rotate(); err != nil {
 		return err
 	}
-	d.setTimer(d.duration)
+	if err := d.setTimer(d.duration); err != nil {
+		return err
+	}
 	// clean old backups
 	return d.cleanBackups(block)
 }
@@ -535,7 +526,9 @@ func (d *DurationRotateFile) setTimer(duration time.Duration) error {
 	if d.timer == nil {
 		d.timer = time.NewTimer(duration)
 	} else {
-		d.timer.Reset(duration)
+		if !d.timer.Reset(duration) {
+			return ResetTimerError
+		}
 	}
 	return nil
 }
@@ -559,7 +552,9 @@ func (d *DurationRotateFile) montRotateFile(file string) error {
 	info, err := os.Stat(file)
 	// creates the rotating file when not found
 	if os.IsNotExist(err) {
-		d.setTimer(d.duration)
+		if err = d.setTimer(d.duration); err != nil {
+			return err
+		}
 		return d.makeRotateFile(file)
 	}
 	if err != nil {
@@ -571,7 +566,9 @@ func (d *DurationRotateFile) montRotateFile(file string) error {
 	// use the leftover file if it is not expired
 	if expired.After(now) {
 		// update rotate timer
-		d.setTimer(expired.Sub(now))
+		if err = d.setTimer(expired.Sub(now)); err != nil {
+			return err
+		}
 		return d.useLeftoverFile(file)
 	}
 	return d.rotate(d.block)
@@ -588,13 +585,18 @@ func (d *DurationRotateFile) Close() error {
 	return d.close()
 }
 
-
+// SizeRotateFile represents a log rotation file structure that triggers rotation based on file size.
+// When the amount of log data written to the file reaches a predefined size limit,
+// a new log file is automatically created to continue logging.
+// This struct embeds the baseRotateFile which provides the fundamental log rotation capabilities.
 type SizeRotateFile struct {
-	// 分片的大小
+	// size defines the threshold size (in bytes) that triggers log file rotation.
+	// When the used space in the log file exceeds this value, a new log file is created.
 	size int64
-	// 当前使用的大小
+
+	// used tracks the amount of space already used in the current log file (in bytes).
+	// This value increases as log data is written and resets to 0 when the size threshold is reached.
 	used int64
-	// 当前写入的文件对象
 	baseRotateFile
 }
 
@@ -666,9 +668,9 @@ func (s *SizeRotateFile) rotate(block bool) error {
 }
 
 // Write implements io.Writer.
-// when the file does not exist, the file will be created implicitly. each time writing is completed, 
-// it will check whether the file exceeds the limit(user > size). When the limit is exceeded, the 
-// current file will be saved as a backup and a new file with the same name will be created to replace 
+// when the file does not exist, the file will be created implicitly. each time writing is completed,
+// it will check whether the file exceeds the limit(user > size). When the limit is exceeded, the
+// current file will be saved as a backup and a new file with the same name will be created to replace
 // the original file.
 func (s *SizeRotateFile) Write(p []byte) (n int, err error) {
 

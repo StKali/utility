@@ -1,4 +1,4 @@
-package tool
+package lib
 
 import (
 	"errors"
@@ -14,7 +14,9 @@ type Number interface {
 
 // Max returns the max value in values
 func Max[T Number](values ...T) T {
-	if len(values) == 0 { return 0 }
+	if len(values) == 0 {
+		return 0
+	}
 	max := values[0]
 	for _, v := range values[1:] {
 		if v > max {
@@ -26,7 +28,9 @@ func Max[T Number](values ...T) T {
 
 // Min returns the min value in values
 func Min[T Number](values ...T) T {
-	if len(values) == 0 { return 0 }
+	if len(values) == 0 {
+		return 0
+	}
 	min := values[0]
 	for _, v := range values[1:] {
 		if v < min {

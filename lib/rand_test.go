@@ -1,10 +1,11 @@
-package tool
+package lib
 
 import (
-	"github.com/stretchr/testify/require"
 	"math/rand"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestRandString(t *testing.T) {
@@ -80,7 +81,7 @@ func TestMin(t *testing.T) {
 	// int8
 	minInt8 := Min(int8(122), int8(100), int8(111))
 	require.Equal(t, int8(100), minInt8)
-	
+
 	// empty
 	require.Equal(t, 0, Min([]int{}...))
 }

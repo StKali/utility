@@ -4,15 +4,18 @@ import (
 	"bytes"
 	stderr "errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/stkali/utility/lib"
 )
 
 var regxMatchErrorHeader = regexp.MustCompile(`(?m)^Error: .*`)
-var regxMatchErrorTrace = regexp.MustCompile(`(?m)^Trace:\n`)
+var regxMatchErrorTrace = regexp.MustCompile(`(?m)^Traceback:\n`)
 
 func TestIs(t *testing.T) {
 
@@ -26,6 +29,143 @@ func TestIs(t *testing.T) {
 	require.True(t, Is(wrapperError, wrapperError))
 	require.False(t, Is(wrapperError, stderr.New("xxx")))
 
+}
+
+func TestExitf(t *testing.T) {
+
+	var actualCode int
+	oldExit := Exit
+	defer func() { Exit = oldExit }()
+	Exit = func(code int) {
+		actualCode = code
+	}
+	buf := &bytes.Buffer{}
+	oldOutput := errOutput
+	errOutput = buf
+	defer func() { errOutput = oldOutput }()
+	wantCode := rand.Intn(255)
+	errMsg := lib.RandInternalString(10, 100)
+
+	Exitf(wantCode, errMsg)
+	require.Equal(t, wantCode, actualCode)
+	require.Equal(t, errPrefix+": "+errMsg, buf.String())
+}
+
+func TestSetExitHook(t *testing.T) {
+	oldHook := exitHook
+	defer func() {
+		exitHook = oldHook
+	}()
+	wantMsg := lib.RandInternalString(8, 16)
+	wantTracer := GetTrace(3)
+	var actualMsg string
+	var actualTracer Tracer
+	hook := func(msg string, tracer Tracer) {
+		actualMsg = msg
+		actualTracer = tracer
+	}
+	SetExitHook(hook)
+	require.NotNil(t, exitHook)
+	exitHook(wantMsg, wantTracer)
+	require.Equal(t, wantMsg, actualMsg)
+	require.Equal(t, wantTracer, actualTracer)
+}
+
+func TestSetErrPrefix(t *testing.T) {
+
+	cases := []struct {
+		Name   string
+		Prefix string
+	}{
+		{
+			"empty-string",
+			"",
+		},
+		{
+			"general-string",
+			"Error",
+		},
+		{
+			"contain-space-string",
+			"meet error",
+		},
+		{
+			"contain-line-string",
+			"meet_error",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			old := errPrefix
+			SetErrPrefix(c.Prefix)
+			require.NotEqual(t, c.Prefix, old)
+		})
+	}
+}
+
+func TestSetErrPrefixf(t *testing.T) {
+
+	old := errPrefix
+	SetErrPrefixf("%s err", "program")
+	require.NotEqual(t, fmt.Sprintf("%s err", "program"), old)
+}
+
+func TestCheckErr(t *testing.T) {
+
+	testError := Error("test error")
+	testIError := Newf("with tracer error")
+	output := &bytes.Buffer{}
+
+	cases := []struct {
+		name   string
+		prefix string
+		err    error
+		expect string
+	}{
+		{
+			"empty error",
+			"prefix",
+			nil,
+			"",
+		},
+		{
+			"test error",
+			"prefix",
+			testError,
+			"prefix: test error\n",
+		},
+		{
+			"no preifx",
+			"",
+			testError,
+			"test error\n",
+		},
+		{
+			"with tracer error",
+			"prefix",
+			testIError,
+			"prefix: with tracer error\n",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var wantExitCode int
+			oldExit := Exit
+			Exit = func(code int) { wantExitCode = code }
+			defer func() { Exit = oldExit }()
+
+			SetErrPrefix(c.prefix)
+			SetErrOutput(output)
+			output.Reset()
+			CheckErr(c.err)
+			if c.err != nil {
+				require.Equal(t, wantExitCode, 1)
+			}
+			require.Equal(t, c.expect, output.String())
+		})
+	}
 }
 
 func TestDesc(t *testing.T) {
@@ -174,88 +314,6 @@ func TestJoinErrorMethod(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			errString := Join(c.errs...).Error()
 			require.Equal(t, c.expect, errString)
-		})
-	}
-}
-
-func TestSetErrPrefix(t *testing.T) {
-
-	cases := []struct {
-		Name   string
-		Prefix string
-	}{
-		{
-			"empty-string",
-			"",
-		},
-		{
-			"general-string",
-			"Error",
-		},
-		{
-			"contain-space-string",
-			"meet error",
-		},
-		{
-			"contain-line-string",
-			"meet_error",
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.Name, func(t *testing.T) {
-			old := errPrefix
-			SetErrPrefix(c.Prefix)
-			require.NotEqual(t, c.Prefix, old)
-		})
-	}
-}
-
-func TestSetErrPrefixf(t *testing.T) {
-
-	old := errPrefix
-	SetErrPrefixf("%s err", "program")
-	require.NotEqual(t, fmt.Sprintf("%s err", "program"), old)
-}
-
-func TestCheckErr(t *testing.T) {
-
-	testErr := Error("test error")
-	output := &bytes.Buffer{}
-
-	cases := []struct {
-		name   string
-		prefix string
-		err    error
-		expect string
-	}{
-		{
-			"empty error",
-			"prefix",
-			nil,
-			"",
-		},
-		{
-			"test error",
-			"prefix",
-			testErr,
-			"prefix: test error\n",
-		},
-		{
-			"no preifx",
-			"",
-			testErr,
-			"test error\n",
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			SetErrPrefix(c.prefix)
-			SetErrOutput(output)
-			output.Reset()
-			CheckErr(c.err)
-			require.Equal(t, c.expect, output.String())
 		})
 	}
 }

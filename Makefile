@@ -1,5 +1,16 @@
+PROGRAM=utility
+REMOVE=@rm -f
+
+# cover
+COVERFILE=cover.out
+COVERHTML=coverage.html
+
 test:
-	go test -v ./... -coverprofile=cover.out
-	echo "start render coverage report to coverage.html"
-	go tool cover --html=cover.out -o coverage.html
-	echo "create coverage report at: coverage.html"
+	go test -v ./... -coverprofile=$(COVERFILE)
+	echo "start render coverage report to $(COVERHTML)"
+	go tool cover --html=cover.out -o $(COVERHTML)
+	echo "create coverage report at: $(COVERHTML)"
+
+clean:
+	$(REMOVE) $(COVERFILE) $(COVERHTML) main.go
+

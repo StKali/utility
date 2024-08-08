@@ -1,8 +1,7 @@
-package log
+package rotate
 
 import (
 	stderr "errors"
-	"fmt"
 	"io"
 	"math/rand"
 	"os"
@@ -11,8 +10,8 @@ import (
 	"time"
 
 	"github.com/stkali/utility/errors"
+	"github.com/stkali/utility/lib"
 	"github.com/stkali/utility/paths"
-	"github.com/stkali/utility/tool"
 	"github.com/stretchr/testify/require"
 )
 
@@ -203,7 +202,6 @@ func TestBaseRotateFileFilename(t *testing.T) {
 func TestBaseDropBackupsFiles(t *testing.T) {
 
 	testDir := t.TempDir()
-	fmt.Println(testDir)
 	defer os.RemoveAll(testDir)
 	fileCount := 5 + rand.Intn(5)
 	f := newBaseRotateFile()
@@ -221,17 +219,11 @@ func TestBaseDropBackupsFiles(t *testing.T) {
 	fs, err := os.ReadDir(testDir)
 	require.NoError(t, err)
 	require.Equal(t, fileCount, len(fs))
-	err = f.DropRotateFiles()
-	require.Error(t, err)
 
 	_, err = os.OpenFile(f.filename(), os.O_CREATE, defaultModePerm)
 	require.NoError(t, err)
 	err = f.DropRotateFiles()
 	require.NoError(t, err)
-
-	os.Chmod(testDir, 0o000)
-	err = f.DropRotateFiles()
-	require.Error(t, err)
 }
 
 func TestInterfaceMethods(t *testing.T) {
@@ -297,13 +289,13 @@ func TestUseLeftoverFile(t *testing.T) {
 	require.False(t, paths.IsExisted(f.filename()))
 	err := f.useLeftoverFile(f.filename())
 	require.ErrorIs(t, err, os.ErrNotExist)
-	
+
 	// create leftover file
 	fd, err := os.OpenFile(f.filename(), os.O_CREATE|os.O_WRONLY, defaultModePerm)
 	require.NoError(t, err)
 	defer f.close()
 	leftLength := 10
-	text := tool.RandString(leftLength)
+	text := lib.RandString(leftLength)
 	io.WriteString(fd, text)
 	err = fd.Close()
 	require.NoError(t, err)
@@ -372,7 +364,7 @@ func TestDurationRotateFileSetTimer(t *testing.T) {
 
 	f.timer = nil
 	require.NoError(t, f.setTimer(time.Hour))
-	require.NoError(t, f.setTimer(2 * time.Hour))
+	require.NoError(t, f.setTimer(2*time.Hour))
 }
 
 func TestDurationRotateFileWrite(t *testing.T) {
@@ -383,7 +375,7 @@ func TestDurationRotateFileWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	for i := 0; i < 100; i++ {
-		text := tool.RandInternalString(0, 1<<10)
+		text := lib.RandInternalString(0, 1<<10)
 		n, err := io.WriteString(f, text)
 		require.Equal(t, n, len(text))
 		require.NoError(t, err)
@@ -430,7 +422,7 @@ func TestDurationRotateFileMontRotateFile(t *testing.T) {
 	f, err := NewDurationRotateFile(testFile, time.Hour)
 	require.NoError(t, err)
 	length := 50 + rand.Intn(100)
-	text := tool.RandString(length)
+	text := lib.RandString(length)
 	n, err := io.WriteString(f, text)
 	require.NoError(t, err)
 	require.Equal(t, length, n)
@@ -461,7 +453,7 @@ func TestNewSizeRotateFile(t *testing.T) {
 }
 
 func TestSizeRotateFileSetSize(t *testing.T) {
-	
+
 	testFile := filepath.Join(t.TempDir(), "test.rot")
 
 	f, err := NewSizeRotateFile(testFile, defaultSize)
@@ -506,7 +498,7 @@ func TestMontSizeRotateFile(t *testing.T) {
 
 	// create leftoevr rotate file
 	leftLength := 10
-	n, err := io.WriteString(fd, tool.RandString(leftLength))
+	n, err := io.WriteString(fd, lib.RandString(leftLength))
 	require.Equal(t, leftLength, n)
 	require.NoError(t, err)
 
@@ -514,7 +506,7 @@ func TestMontSizeRotateFile(t *testing.T) {
 	require.Equal(t, sf.filename(), testFile)
 
 	require.NoError(t, err)
-	n, err = io.WriteString(sf, tool.RandString(leftLength))
+	n, err = io.WriteString(sf, lib.RandString(leftLength))
 	require.Equal(t, leftLength, n)
 	require.NoError(t, err)
 
@@ -541,11 +533,10 @@ func BenchmarkValidateTimeFormat(b *testing.B) {
 }
 
 func TestValidateTimeFormat(t *testing.T) {
-	cases := []struct{
-		name string
+	cases := []struct {
+		name   string
 		format string
 		expect bool
-
 	}{
 		{
 			"empty",

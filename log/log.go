@@ -6,8 +6,6 @@ import (
 	"log"
 	"os"
 	"strings"
-
-	"github.com/stkali/utility/tool"
 )
 
 const (
@@ -18,6 +16,8 @@ const (
 	ERROR
 	FATAL
 )
+
+var Exit = os.Exit
 
 type Level int
 
@@ -30,7 +30,8 @@ func (l Level) String() string {
 	return fmt.Sprintf("[Level(%d)]", l)
 }
 
-// ToLevel convert string, int, Level to Level
+// ToLevel converts a string, int, or Level to a Level type.
+// It handles conversions like .
 // ToLevel(1)         -> INFO
 // ToLevel("debug")   -> DEBUG
 // ToLevel("Warning") -> WARN
@@ -142,7 +143,7 @@ func (l *defaultLogger) logf(lv Level, format *string, args ...any) {
 	}
 	_ = l.stdLog.Output(4, msg)
 	if lv == FATAL {
-		tool.Exit(1)
+		Exit(1)
 	}
 }
 
@@ -195,7 +196,7 @@ func (l *defaultLogger) Tracef(format string, args ...any) {
 }
 
 var logger Logger = &defaultLogger{
-	level:  INFO,
+	level:  WARN,
 	stdLog: log.New(os.Stdout, defaultPrefix, defaultFlags),
 }
 
