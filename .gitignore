@@ -1,8 +1,8 @@
 # jetbrains files
-.idea
+.idea/
 
 #vscode files
-.vscode
+.vscode/
 
 main.go
 
@@ -22,3 +22,6 @@ coverage.html
 
 # Dependency directories (remove the comment below to include it)
 vendor/
+
+# macOS hidden files
+.DS_Store

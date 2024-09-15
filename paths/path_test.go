@@ -138,9 +138,57 @@ func TestToAbsPath(t *testing.T) {
 			"~/hello.go",
 			filepath.Join(homeDirectory, "hello.go"),
 		},
+		{
+			"abs-path",
+			"/",
+			"/",
+		},
+		{
+			"env-path",
+			"$HOME/hello.go",
+			filepath.Join(homeDirectory, "hello.go"),
+		},
 	}
 
 	for _, c := range cases {
-		require.True(t, c.Expect == ToAbsPath(c.Path))
+		t.Run(c.Name, func(t *testing.T) {
+			require.True(t, c.Expect == ToAbsPath(c.Path))
+		})
 	}
+}
+
+func TestOpenFile(t *testing.T) {
+	testDir := t.TempDir()
+	defer os.RemoveAll(testDir)
+
+	// not existed file
+	file := filepath.Join(testDir, "not-existed-file")
+	fd, err := OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o777)
+	require.NoError(t, err)
+	defer fd.Close()
+
+	// not existed dir
+	file = filepath.Join(testDir, "not-exited-dir", "not-existed-file")
+	fd, err = OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o777)
+	require.NoError(t, err)
+	defer fd.Close()
+
+	// failed to create directory
+	file = filepath.Join(testDir, "not-exited-dir2", "not-existed-file")
+	originMakeAll := makeAll
+	defer func() {
+		makeAll = originMakeAll
+	}()
+	makeAll = func(path string, perm os.FileMode) error {
+		return InvalidPathError
+	}
+	fd, err = OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o777)
+	require.ErrorIs(t, err, InvalidPathError)
+}
+
+func TestAbs(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		_, err := Abs("")
+		require.ErrorIs(t, err, InvalidPathError)
+	})
 }

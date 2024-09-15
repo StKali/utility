@@ -3,16 +3,20 @@ package paths
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/stkali/utility/errors"
 )
 
+var InvalidPathError = errors.Error("invalid path error")
+
 var (
 	onceUserHome sync.Once
-	userHome string
-	
+	userHome     string
+	// for test
+	makeAll = os.MkdirAll
 )
 
 // UserHome return current user home path string
@@ -27,19 +31,38 @@ func UserHome() string {
 
 // ToAbsPath convert any style path to posix  absolutely path
 func ToAbsPath(path string) string {
-	if filepath.IsAbs(path) {
-		return path
+	path, err := abs(path)
+	errors.CheckErr(err)
+	return path
+}
+
+var MustAbs = ToAbsPath
+
+func abs(path string) (string, error) {
+	switch path {
+	case "":
+		return "", InvalidPathError
+	case "~":
+		return UserHome(), nil
+	case ".":
+		return os.Getwd()
 	}
 
-	if path[0] == '~' {
+	path = filepath.Clean(path)
+	if strings.HasPrefix(path, "~/") {
 		path = UserHome() + path[1:]
 	}
-	var err error
-	path, err = filepath.Abs(path)
-	if err != nil {
-		errors.Exitf(1, "failed to convert path to absolutely, err: %s", err)
+	if filepath.IsAbs(path) {
+		return path, nil
 	}
-	return os.ExpandEnv(path)
+	path = os.ExpandEnv(path)
+	return filepath.Abs(path)
+}
+
+// Abs(path) returns the absolute path of the given path.
+// If failed to convert path to absolutely, it returns an error.
+func Abs(path string) (string, error) {
+	return abs(path)
 }
 
 // GetFileCreated get the creation time of the file through the file name.
@@ -76,4 +99,21 @@ func SplitWithExt(path string) (string, string, string) {
 func IsExisted(file string) bool {
 	_, err := os.Stat(file)
 	return err == nil || os.IsExist(err)
+}
+
+// OpenFile attempts to create or open a file with the specified name, flags, and permissions.
+// If the file's directory does not exist, it attempts to create the directory with 0755 permissions.
+func OpenFile(file string, flag int, perm os.FileMode) (fd *os.File, err error) {
+	fd, err = os.OpenFile(file, flag, perm)
+	if err != nil {
+		if os.IsNotExist(err) {
+			directory := filepath.Dir(file)
+			err = makeAll(directory, os.ModePerm)
+			if err != nil {
+				return nil, errors.Newf("failed to create directory: %q, err: %s", directory, err)
+			}
+			return os.OpenFile(file, flag, perm)
+		}
+	}
+	return fd, err
 }
