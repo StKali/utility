@@ -5,40 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
-	"time"
 )
-
-type Number interface {
-	int | int8 | int16 | int32 | int64 | uint | uint8 | uint16 | uint32 | uint64 | float32 | float64
-}
-
-// Max returns the max value in values
-func Max[T Number](values ...T) T {
-	if len(values) == 0 {
-		return 0
-	}
-	max := values[0]
-	for _, v := range values[1:] {
-		if v > max {
-			max = v
-		}
-	}
-	return max
-}
-
-// Min returns the min value in values
-func Min[T Number](values ...T) T {
-	if len(values) == 0 {
-		return 0
-	}
-	min := values[0]
-	for _, v := range values[1:] {
-		if v < min {
-			min = v
-		}
-	}
-	return min
-}
 
 const (
 	letterBytes   = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -47,15 +14,13 @@ const (
 	letterIdxMax  = 63 / letterIdxBits   // # of letter indices fitting in 63 bits
 )
 
-var src = rand.NewSource(time.Now().UnixNano())
-
 // RandString returns a random string of length n
 func RandString(n int) string {
 	b := make([]byte, n)
 	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters!
-	for i, cache, remain := n-1, src.Int63(), letterIdxMax; i >= 0; {
+	for i, cache, remain := n-1, rand.Int63(), letterIdxMax; i >= 0; {
 		if remain == 0 {
-			cache, remain = src.Int63(), letterIdxMax
+			cache, remain = rand.Int63(), letterIdxMax
 		}
 		if idx := int(cache & letterIdxMask); idx < len(letterBytes) {
 			b[i] = letterBytes[idx]
