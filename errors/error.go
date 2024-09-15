@@ -6,8 +6,6 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"github.com/stkali/utility/log"
 )
 
 var (
@@ -15,6 +13,7 @@ var (
 	Is    = stderr.Is
 	As    = stderr.As
 	Error = stderr.New
+	exit  = os.Exit
 )
 
 // iErr represents a custom error type that can hold multiple errors and a tracer.
@@ -164,11 +163,6 @@ func Join(errs ...error) error {
 }
 
 var (
-		// Exit allows customizing the function used to exit behavior of the program,
-	// which is used in tests containing the os.Exit code.
-	// defaults to os.Exit.
-	Exit = os.Exit
-
 	// errPrefix is a prefix string appended to the beginning of error messages.
 	errPrefix = "occurred error"
 
@@ -178,14 +172,12 @@ var (
 
 	// exitHook is a function hook that gets called before the program exits due to an error.
 	// It is provided the error message and a tracer.
-	exitHook ExitHook = func(msg string, tracer Tracer) {
-		log.Infof("%s\n%s", msg, tracer)
-	}
+	exitHook ExitHook = nil
 )
 
 // ExitHook defines the signature of a function that can be set as a hook to execute before
 // program exit.
-type ExitHook func(msg string, tracer Tracer)
+type ExitHook func(code int, msg string, tracer Tracer)
 
 // SetErrPrefix allows changing the prefix string used in error messages.
 func SetErrPrefix(prefix string) {
@@ -207,6 +199,16 @@ func SetExitHook(hook ExitHook) {
 	exitHook = hook
 }
 
+// Exit allows customizing the function used to exit behavior of the program,
+// which is used in tests containing the os.Exit code.
+// defaults to os.Exit.
+func Exit(code int) {
+	if exitHook != nil {
+		exitHook(code, "", GetTrace(3))
+	}
+	exit(code)
+}
+
 // Exitf prints a formatted error message to the error output, calls the exit hook (if set),
 // and then exits the program with the given code.
 func Exitf(code int, format string, args ...any) {
@@ -221,9 +223,9 @@ func Exitf(code int, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	_, _ = fmt.Fprint(errOutput, msg)
 	if exitHook != nil {
-		exitHook(msg, GetTrace(3))
+		exitHook(code, msg, GetTrace(3))
 	}
-	Exit(code)
+	exit(code)
 }
 
 // CheckErr prints an error message with the set prefix to stderr and exits the program with code 1
@@ -247,7 +249,7 @@ func CheckErr(err any) {
 		} else {
 			tracer = GetTrace(3)
 		}
-		exitHook(msg, tracer)
+		exitHook(1, msg, tracer)
 	}
-	Exit(1)
+	exit(1)
 }

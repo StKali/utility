@@ -31,48 +31,113 @@ func TestIs(t *testing.T) {
 
 }
 
+func TestExit(t *testing.T) {
+	originExit := exit
+	defer func() {
+		exit = originExit
+	}()
+	actualExitCode := 0
+	mockExit := func(code int) {
+		actualExitCode = code
+	}
+	exit = mockExit
+	wantExitCode := 100
+	SetExitHook(func(code int, msg string, tracer Tracer) {
+		require.Equal(t, msg, "")
+		require.NotNil(t, tracer)
+	})
+	defer SetExitHook(nil)
+	Exit(wantExitCode)
+	require.Equal(t, wantExitCode, actualExitCode)
+}
+
 func TestExitf(t *testing.T) {
 
+	// mock exit function
 	var actualCode int
-	oldExit := Exit
-	defer func() { Exit = oldExit }()
-	Exit = func(code int) {
+	var actualMessage string
+	var wantCode int
+	var wantMessage string
+	mockExit := func(code int) {
 		actualCode = code
 	}
-	buf := &bytes.Buffer{}
-	oldOutput := errOutput
-	errOutput = buf
-	defer func() { errOutput = oldOutput }()
-	wantCode := rand.Intn(255)
-	errMsg := lib.RandInternalString(10, 100)
+	oldExit := exit
+	exit = mockExit
+	defer func() { exit = oldExit }()
 
-	Exitf(wantCode, errMsg)
-	require.Equal(t, wantCode, actualCode)
-	require.Equal(t, errPrefix+": "+errMsg, buf.String())
+	t.Run("errPrefix", func(t *testing.T) {
+		// prefix == ""
+		buf := &bytes.Buffer{}
+		// ensure prefix is empty
+		SetErrPrefix("")
+		SetErrOutput(buf)
+		wantCode = rand.Intn(255)
+		wantMessage = lib.RandInternalString(8, 24)
+		Exitf(wantCode, wantMessage)
+		require.Equal(t, wantCode, actualCode)
+		require.Equal(t, wantMessage, buf.String())
+
+		// prefix != ""
+		buf.Reset()
+		prefix := "test prefix"
+		SetErrPrefix("test prefix")
+		wantCode = rand.Intn(255)
+		wantMessage = lib.RandInternalString(8, 24)
+		Exitf(wantCode, wantMessage)
+		require.Equal(t, wantCode, actualCode)
+		require.Equal(t, fmt.Sprintf("%s: %s", prefix, wantMessage), buf.String())
+
+	})
+
+	t.Run("exit hook", func(t *testing.T) {
+		buf := &bytes.Buffer{}
+		SetErrPrefix("")
+		var actualTracer Tracer
+		SetExitHook(func(code int, msg string, tracer Tracer) {
+			actualCode = code
+			actualMessage = msg
+			actualTracer = tracer
+		})
+		SetErrOutput(buf)
+		wantCode = rand.Intn(255)
+		wantMessage = lib.RandInternalString(8, 24)
+		Exitf(wantCode, wantMessage)
+		require.Equal(t, wantCode, actualCode)
+		require.Equal(t, wantMessage, actualMessage)
+		require.NotNil(t, actualTracer)
+	})
+
 }
 
 func TestSetExitHook(t *testing.T) {
-	oldHook := exitHook
+	originHook := exitHook
 	defer func() {
-		exitHook = oldHook
+		SetExitHook(originHook)
 	}()
 	wantMsg := lib.RandInternalString(8, 16)
 	wantTracer := GetTrace(3)
+	wantExitCode := 100
 	var actualMsg string
 	var actualTracer Tracer
-	hook := func(msg string, tracer Tracer) {
+	var actualExitCode int
+	hook := func(code int, msg string, tracer Tracer) {
+		actualExitCode = code
 		actualMsg = msg
 		actualTracer = tracer
 	}
 	SetExitHook(hook)
 	require.NotNil(t, exitHook)
-	exitHook(wantMsg, wantTracer)
+	exitHook(wantExitCode, wantMsg, wantTracer)
+	require.Equal(t, wantExitCode, actualExitCode)
 	require.Equal(t, wantMsg, actualMsg)
 	require.Equal(t, wantTracer, actualTracer)
 }
 
 func TestSetErrPrefix(t *testing.T) {
-
+	originErrPrefix := errPrefix
+	defer func() {
+		SetErrPrefix(originErrPrefix)
+	}()
 	cases := []struct {
 		Name   string
 		Prefix string
@@ -97,18 +162,21 @@ func TestSetErrPrefix(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
-			old := errPrefix
 			SetErrPrefix(c.Prefix)
-			require.NotEqual(t, c.Prefix, old)
+			require.Equal(t, c.Prefix, errPrefix)
 		})
 	}
 }
 
 func TestSetErrPrefixf(t *testing.T) {
 
-	old := errPrefix
+	originErrPrefix := errPrefix
+	defer func() {
+		SetErrPrefix(originErrPrefix)
+	}()
 	SetErrPrefixf("%s err", "program")
-	require.NotEqual(t, fmt.Sprintf("%s err", "program"), old)
+	prefix := fmt.Sprintf("%s err", "program")
+	require.Equal(t, errPrefix, prefix)
 }
 
 func TestCheckErr(t *testing.T) {
@@ -148,16 +216,26 @@ func TestCheckErr(t *testing.T) {
 			"prefix: with tracer error\n",
 		},
 	}
+	var wantExitCode int
+	originExit := exit
+	mockExit := func(code int) { wantExitCode = code }
+	exit = mockExit
+	defer func() { exit = originExit }()
+
+	originErrPrefix := errPrefix
+	defer func() {
+		SetErrPrefix(originErrPrefix)
+	}()
+
+	originOutput := errOutput
+	SetErrOutput(output)
+	defer func() {
+		SetErrOutput(originOutput)
+	}()
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var wantExitCode int
-			oldExit := Exit
-			Exit = func(code int) { wantExitCode = code }
-			defer func() { Exit = oldExit }()
-
 			SetErrPrefix(c.prefix)
-			SetErrOutput(output)
 			output.Reset()
 			CheckErr(c.err)
 			if c.err != nil {
@@ -172,7 +250,7 @@ func TestDesc(t *testing.T) {
 	err := Newf("this is a simple error")
 	w1err := Newf("wrapper1 error: %s", err)
 	w2err := Newf("wrapper2 error: %s", w1err)
-	fmt.Println(Is(w2err, err))
+	require.True(t, Is(w2err, err))
 }
 
 func TestError(t *testing.T) {
