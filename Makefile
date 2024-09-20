@@ -7,7 +7,9 @@ COVER_FILE=cover.out
 COVER_HTML=coverage.html
 TEMPORARY=temporary
 
-test: mock
+all: test clean
+
+test: env mock
 	$(GO) test -v ./... -coverprofile=$(COVER_FILE)
 	$(PRINT) "Start render coverage report to $(COVER_HTML)."
 	$(GO) tool cover --html=cover.out -o $(COVER_HTML)
