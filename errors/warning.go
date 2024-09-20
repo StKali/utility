@@ -47,13 +47,26 @@ func SetWarningPrefixf(s string, args ...any) {
 func warn(format *string, a ...any) {
 	var msg string
 	if format == nil {
-		msg = fmt.Sprint(a...)
+		buf := make([]byte, 0, 32)
+		var n any
+		for index := range a {
+			if index != 0 {
+				buf = fmt.Append(buf, n, ", ")
+			}
+			if e, ok := a[index].(error); ok {
+				n = e.Error()
+			} else {
+				n = a[index]
+			}
+		}
+		buf = fmt.Append(buf, n)
+		msg = string(buf)
 	} else {
 		msg = fmt.Sprintf(*format, a...)
 	}
 	if warningPrefix == "" {
 		// If no prefix is set, just write the message.
-		_, _ = fmt.Fprintln(warningOutput, msg)
+		_, _ = fmt.Fprintf(warningOutput, "%s\n", msg)
 	} else {
 		// Prepend the prefix and write the message.
 		_, _ = fmt.Fprintf(warningOutput, "%s: %s\n", warningPrefix, msg)
@@ -64,7 +77,7 @@ func warn(format *string, a ...any) {
 // It ignores warnings if the warning mechanism is disabled, or if no parameters are provided.
 func Warning(a ...any) {
 	// Check if warnings are disabled or no parameters are provided
-	if disableWarning || a == nil || len(a) == 0 || (len(a) == 1 && a[0] == nil) {
+	if disableWarning || a == nil || (len(a) == 1 && a[0] == nil) {
 		return
 	}
 	warn(nil, a...)

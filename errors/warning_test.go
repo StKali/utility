@@ -43,7 +43,25 @@ func TestWarning(t *testing.T) {
 		{
 			"type 2 point",
 			[]any{&struct{}{}, nil},
-			"warning: &{} <nil>\n",
+			"warning: &{}, <nil>\n",
+			"warning",
+		},
+		{
+			"error with traceback",
+			[]any{New("this is error")},
+			"prefix: this is error\n",
+			"prefix",
+		},
+		{
+			"nil(s)",
+			[]any{nil, nil, nil},
+			"warning: <nil>, <nil>, <nil>\n",
+			"warning",
+		},
+		{
+			"start nil",
+			[]any{nil, "this is warning"},
+			"warning: <nil>, this is warning\n",
 			"warning",
 		},
 	}
