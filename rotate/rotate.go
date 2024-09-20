@@ -1,726 +1,630 @@
-// Rotated files can be sharded based on time and size, and the writing efficiency
-// of rotated files is almost the same as that of native files.
-//	==============================================================
-//	name                              times           ns/op
-//	--------------------------------------------------------------
-//	system_file_write-10         	  808066	      1503
-//	size_rotate_write-10  	          696607	      1484
-//	duration_rotate_write-10      	  748053	      1481
-//	==============================================================
+// Copyright 2021-2024 The utility Authors. All rights reserved.
+// Use of this source code is governed by the MIT license that can be found in the
+// LICENSE file
+
+// Package rotate provides a rotating file writer that can be used to write data to.
+// It implements the io.WriteCloser interface and WriteString method.
 
 package rotate
 
 import (
+	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/stkali/utility/errors"
+	"github.com/stkali/utility/lib"
 	"github.com/stkali/utility/paths"
 )
 
-// RotateFiler is the interface that define the rotating file
-type RotateFiler interface {
-	SetAge(age time.Duration) error
-	SetBackups(count int) error
-	SetBackupTimeFormat(format string) error
-	Folder() string
-	Age() time.Duration
-	Backups() int
-	BackupTimeFormat() string
-	Rotate(block bool) error
-	DropRotateFiles() error
-	io.WriteCloser
-}
-
 const (
-	defaultBackupTimeFormat = "2006-01-02-150405"
-	defaultBackups          = 30
-	defaultDuration         = 30 * 24 * time.Hour
-	defaultSize             = 1 << 26             // 64MB
-	defaultAge              = 30 * 24 * time.Hour // days
-	defaultName             = "rotating"
-	defaultExt              = ".log"
-	defaultFolder           = "."
-	defaultModePerm         = 0o644
+	writeMode         = 0o200
+	saltWidth         = 8
+	compressExtension = ".gz"
 )
 
-var InvalidDurationError = errors.Error("invalid duration (must be >= 0)")
-var ResetTimerError = errors.Error("failed to reset timer")
-var InvalidSizeError = errors.Error("invalid size (must be > 0)")
-var InvalidAgeError = errors.Error("invalid Age (must be >= 0)")
-var InvalidBackupsError = errors.Error("invalid backups (must be >= 0)")
-var InvalidTimeFormatError = errors.Error("invalid time format string")
-var InvalidRotateFileError = errors.Error("invalid rotating file")
+var (
+	// define errors for the package.
+	ModePermissionError          = errors.Error("invalid mode permission")
+	InvalidBackupPrefixError     = errors.Error("invalid backup prefix")
+	InvalidCompressionLevelError = errors.Error("invalid compression level")
 
-// baseRotateFile is a foundational struct for implementing log file rotation functionality.
-// It provides the basic mechanisms and configuration options for rotating log files based on various criteria.
-type baseRotateFile struct {
-	// backupTimeFormat specifies the format string used to generate the timestamp suffix for backup files.
-	// This format is applied to the current time when a log file is rotated to create a unique backup filename.
-	backupTimeFormat string
+	// for testing, we override the default functions used by the package.
+	osOpen     = os.Open
+	osOpenFile = os.OpenFile
+	osRemove   = os.Remove
+	osRename   = os.Rename
+	osReadDir  = os.ReadDir
+	osMkdirAll = os.MkdirAll
+	ioCopy     = io.Copy
+)
 
-	// backups defines the maximum number of backup files that can be retained after rotation.
-	// When this limit is reached, the oldest backup file will be deleted to make room for new ones.
-	backups int
+// Option is a configuration option for rotating files. default is `defaultOption`
+type Option struct {
 
-	// folder specifies the directory where the rotating log file and its backups are saved.
-	folder string
+	// MaxSize(default: 1 GB) defines the threshold size (in bytes) that triggers a
+	// file rotation.
+	// <= 0 means no rotation based on file size.
+	MaxSize int64
 
-	// name is the prefix used for the main log file and its backup files.
-	// The backup files will have a timestamp suffix appended to this prefix.
-	name string
+	// Duration(default: 1 day) specifies the time interval after which a new file
+	// should be created.
+	// <= 0 means no rotation based on time interval.
+	// NOTE:
+	//   The timer is updated every time rotating, and this includes MaxSize-based updates
+	Duration time.Duration
 
-	// ext is the file extension used for the log file and its backups.
-	// This allows for easy identification of the file type.
-	ext string
+	// MaxAge(default: 30 days) defines the maximum age that a backup file can have before
+	// it is considered for cleanup.
+	// Files older than this duration will be deleted during the cleanup goroutine.
+	// = 0 means no backup files are retained.
+	// < 0 the backup deletion strategy based on `MaxAge` will not work.
+	MaxAge time.Duration
 
-	// fd is the current file descriptor (io.WriteCloser) that is being written to.
-	// It represents the currently active log file.
-	fd io.WriteCloser
+	// ModePerm(default: 0o644) specifies the default file permission bits used when
+	// creating new rotating files.
+	ModePerm os.FileMode
 
-	// mtx is a mutex that ensures thread-safe access to the struct's fields and methods.
-	// It prevents data races and ensures that log rotation and writing operations are synchronized.
+	// Backups(default: 30) defines the maximum number of backup files that can be
+	// retained after rotation. When this limit is reached, the oldest backup file
+	// will be deleted to make space for new ones.
+	// = 0 means no backup files are retained.
+	// < 0 the backup deletion strategy based on `Backups` will not work.
+	Backups int
+
+	// CompressLevel(default: 6) specifies the compression level used when compressing
+	// rotating files.
+	// <= 0 means no compression.
+	CompressLevel int
+
+	// BackupFilePrefix specifies the time format used when creating backup files.
+	BackupPrefix string
+}
+
+var defaultOption = &Option{
+	Duration:     lib.Day,
+	MaxSize:      lib.GB,
+	Backups:      30,
+	MaxAge:       lib.Month,
+	ModePerm:     0o644,
+	BackupPrefix: "rotating-",
+	// Available compression levels are 1-9, 9 is highest compression.
+	// I think 6 is a good compromise between speed and compression ratio.
+	CompressLevel: 6,
+}
+
+// clone returns a copy of the Option.
+func (o *Option) clone() *Option {
+	cp := *o
+	return &cp
+}
+
+type backupFile struct {
+	// modTime is the modification time of the backup file.
+	modTime time.Time
+	// file is abs path of the backup file.
+	file string
+}
+
+// String implements the Stringer interface for backupFile.
+func (b backupFile) String() string {
+	return fmt.Sprintf("backupFile(%s created at %s)", b.file, b.modTime)
+}
+
+// deleteFile deletes the specified file.
+// It prints a warning if the deletion fails.
+func deleteFile(file string) {
+	err := osRemove(file)
+	if err != nil {
+		errors.Warningf("failed to remove file %q, err: %s", file, err)
+	}
+}
+
+// deleteBackupFiles deletes the specified backup files.
+// It prints a warning if any deletion fails.
+func deleteBackupFiles(files []backupFile) {
+	for index := range files {
+		deleteFile(files[index].file)
+	}
+}
+
+// compressFile uses gzip to compress the specified file and delete the original file.
+// If compression or deletion fails, it prints a warning and retains the source file
+// as much as possible
+func compressFile(src, dst string, level int) (err error) {
+
+	f, err := osOpen(src)
+	if err != nil {
+		errors.Warningf("failed to read source file %q, err: %s", src, err)
+		return nil
+	}
+
+	defer func() {
+		f.Close()
+		// if no error occurred, delete source file
+		if err == nil {
+			deleteFile(src)
+		}
+	}()
+
+	info, err := f.Stat()
+	if err != nil {
+		return errors.Newf("failed to get backup file %q info, err: %s", src, err)
+	}
+
+	// os.O_TRUNC ensure file is truncated before writing to it.
+	gzipFile, err := osOpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode())
+	if err != nil {
+		return errors.Newf("failed to open compressed backup file %q, err: %s", src, err)
+	}
+
+	defer gzipFile.Close()
+
+	writer, err := gzip.NewWriterLevel(gzipFile, level)
+	if err != nil {
+		return errors.Newf("failed to create gzip level writer: %s", err)
+	}
+
+	defer writer.Close()
+
+	if _, err = ioCopy(writer, f); err != nil {
+		return errors.Newf("failed to compress rotating file %q, err: %s", src, err)
+	}
+
+	return err
+}
+
+// RotatingFile is a rotating file that can be used to write data to.
+// It implements the io.Writer interface.
+type RotatingFile struct {
+	// writer is the current file descriptor (io.Writer) that is being written to.
+	// It is created on the first write, and the call `Close` closes and is set to nil.
+	writer io.Writer
+
+	// option contains the configuration options for the rotating file.
+	option *Option
+
+	// mtx to protect the security of concurrent writes.
 	mtx sync.Mutex
 
-	// _cleaning (using an underscore prefix to avoid accidental use as a public field)
-	// is an atomic.Bool that indicates whether a garbage collection (cleanup) task is currently being executed.
-	// This allows for safe and efficient cleanup of old backup files.
-	_cleaning atomic.Bool
+	// used keeps track of the amount of space (in bytes) that has been used in
+	// the  current rotating file. This value increases as rotating data is written,
+	// and triggers rotate when the size threshold is reached, after which it is
+	// set back to 0
+	used int64
 
-	// block specifies whether backup file cleanup should be performed synchronously or asynchronously.
-	// If true, cleanup will be performed in a separate goroutine to avoid blocking the main logging thread.
-	block bool
+	// file is the abs path of the current rotating file.
+	file string
+	// folder is the abs path of the folder where the rotating files are stored.
+	folder string
+	// filename is the name of the rotating file with extension.
+	filename string
 
-	// age defines the maximum age that a backup file can have before it is considered for cleanup.
-	// Files older than this duration will be deleted during the cleanup process.
-	age time.Duration
+	// timer is the timer that triggers the rotating rotation based on the duration interval.
+	// It is reset when a new rotating file is created.
+	timer        *time.Timer
+	rotatingTime time.Time
 
-	// modePerm specifies the default file permission bits used when creating new log files.
-	// This ensures that the log files are created with the desired security settings.
-	modePerm os.FileMode
+	// cleaning (using an underscore prefix to avoid accidental use as a public field)
+	// is an atomic.Bool that indicates whether a garbage collection (cleanup) task
+	// is currently being executed.
+	cleaning atomic.Bool
 }
 
-// newBaseRotateFile create a new baseRotateFile
-func newBaseRotateFile() baseRotateFile {
-	return baseRotateFile{
-		backupTimeFormat: defaultBackupTimeFormat,
-		backups:          defaultBackups,
-		folder:           paths.ToAbsPath(defaultFolder),
-		name:             defaultName,
-		ext:              defaultExt,
-		modePerm:         defaultModePerm,
-		age:              defaultAge,
-	}
+// String implements the Stringer interface for RotatingFile.
+func (r *RotatingFile) String() string {
+	return fmt.Sprintf("RotatingFile(%s)", r.filename)
 }
 
-// SetBackups set max backups count, if the number of backup exceeds the set value, the earliest
-// // copy will be deleted.
-func (b *baseRotateFile) SetBackups(backups int) error {
-	if backups < 0 {
-		return InvalidBackupsError
-	}
-	b.backups = backups
-	return nil
-}
+// Write writes the specified data to the rotating file.
+// It returns the number of bytes written and an error if any.
+//
+// NOTE:
+//
+//	When rotating files based on the `MaxSize` threshold, the decision to rotate
+//
+// is made after writing occurs, rather than before. This can lead to the issue where
+// files may become slightly larger than the set `MaxSize`. However, the benefit of
+// this approach is that it ensures at least one write operation is allowed to complete.
+//
+//	In scenarios where a single write exceeds the `MaxSize` threshold, continuous file
+//
+// rotation would potentially block program execution due to inability to write further.
+// To prevent this, returning an error to halt such writes could be implemented, but in
+// practical applications, we often prefer not to do so. Therefore, our implementation
+// allows for at least one such oversized write to proceed, even if it exceeds the threshold.
+func (r *RotatingFile) Write(b []byte) (int, error) {
 
-// Backups returns the max backup count.
-func (b *baseRotateFile) Backups() int {
-	return b.backups
-}
-
-// SetAge sets the max alive age, if the time elapsed since the file was created exceeds
-// the maximum live age, it will be deleted.
-func (b *baseRotateFile) SetAge(age time.Duration) error {
-	if age < 0 {
-		return InvalidAgeError
-	}
-	if age < time.Hour {
-		errors.Warning("the age < 1 hour, it will be created lots of backup files")
-	}
-	b.age = age
-	return nil
-}
-
-// Age returns the maximum live age of the backup
-func (b *baseRotateFile) Age() time.Duration {
-	return b.age
-}
-
-// Folder returns the storage directory of the rotating file.
-func (b *baseRotateFile) Folder() string {
-	tailIndex := len(b.folder) - 1
-	if tailIndex > -1 && b.folder[tailIndex] == os.PathSeparator {
-		return b.folder[:tailIndex]
-	}
-	return b.folder
-}
-
-// SetBackupTimeFormat sets the suffix format of the duplicate file, which should be a valid
-// time formatting string.
-func (b *baseRotateFile) SetBackupTimeFormat(format string) error {
-	// validates the format
-	if validateTimeFormat(format) {
-		b.backupTimeFormat = format
-		return nil
-	}
-	return InvalidTimeFormatError
-}
-
-// validateTimeFormat validates time format string
-func validateTimeFormat(format string) bool {
-	if len(format) == 0 {
-		return false
-	}
-	for i := range format {
-		if '0' <= format[i] && format[i] <= '6' {
-			return true
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+	// ensure the writer is open
+	if r.writer == nil {
+		if err := r.openWriter(); err != nil {
+			return 0, err
 		}
 	}
-	return false
+	n, err := r.writer.Write(b)
+	if err != nil {
+		return n, errors.Newf("failed to write %s to file: %s, err: %s",
+			lib.ToString(b), r.filename, err)
+	}
+	// update used space if MaxSize is set
+	if r.option.MaxSize > 0 {
+		r.used += int64(n)
+		if r.used > r.option.MaxSize {
+			if err = r.rotate(); err != nil {
+				return 0, err
+			}
+		}
+	}
+	return n, nil
 }
 
-// BackupTimeFormat returns the maximum number of copies allowed to exist
-func (b *baseRotateFile) BackupTimeFormat() string {
-	return b.backupTimeFormat
+// WriteString writes the specified string to the rotating file.
+func (r *RotatingFile) WriteString(s string) (int, error) {
+	return r.Write(lib.ToBytes(s))
 }
 
-// DropRotateFiles deletes all rotating files, including backups and files in use.
-func (b *baseRotateFile) DropRotateFiles() error {
-	b.mtx.Lock()
-	defer b.mtx.Unlock()
-	fs, err := b.getBackupFiles()
+// Close implements the io.Closer interface.
+// It closes the rotating file and releases any associated resources.
+func (r *RotatingFile) Close() error {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+	// close the current writer
+	err := r.close()
 	if err != nil {
 		return err
 	}
-	// add current filename to rotate file slice
-	fs = append(fs, b.filename())
-	for _, file := range fs {
-		delErr := os.Remove(file)
-		if !os.IsNotExist(delErr) {
-			err = errors.Join(err, delErr)
-		}
+	// wait for the cleanup goroutine to finish
+	for r.cleaning.Load() {
 	}
-	return err
+	return nil
 }
 
-// rotate rotates the files that have reached the critical condition, and when
-// the backups filename exists, start numbering the files with the same backup
-// name from 1 to prevent file overwrite. After rotating, create a new rotating
-// file to replace the original file object.
-func (b *baseRotateFile) rotate() error {
-	if err := b.close(); err != nil {
-		return err
-	}
-	// changed the old rotating file
-	filename, backupFile := b.filename(), b.backupFile()
-	if _, err := os.Stat(backupFile); err == nil {
-		index := 1
-		p := len(backupFile) - len(b.ext)
-		var sb strings.Builder
-		for err == nil {
-			sb.Reset()
-			sb.Grow(len(backupFile) + 2)
-			sb.WriteString(backupFile[:p])
-			sb.WriteByte('.')
-			sb.WriteString(strconv.Itoa(index))
-			sb.WriteString(backupFile[p:])
-			_, err = os.Stat(sb.String())
-			index++
+// close the rotating file if writer implements the io.Closer interface.
+// Updates writer, used, and timer.
+func (r *RotatingFile) close() error {
+	if closer, ok := r.writer.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			return errors.Newf("failed to close writer: %s, err: %s", r.writer, err)
 		}
-		backupFile = sb.String()
 	}
-	// rename filename to backups name
-	if err := os.Rename(filename, backupFile); err != nil {
+	r.writer = nil
+	r.used = 0
+	if r.timer != nil {
+		r.timer.Stop()
+	}
+	return nil
+}
+
+// openWriter opens a new rotating file for writing.
+// It will create the folder if it does not exist.
+// If the file already exists, it will be opened for appending.
+func (r *RotatingFile) openWriter() error {
+
+	writer, err := r.createFile(r.file, os.O_WRONLY|os.O_APPEND|os.O_CREATE, r.option.ModePerm)
+	if err != nil {
+		return errors.Newf("failed to open rotating file: %q, err: %s", r.file, err)
+	}
+	// update used space if MaxSize is set
+	if r.option.MaxSize > 0 {
+		var info os.FileInfo
+		info, err = writer.Stat()
+		if err != nil {
+			return errors.Newf("failed to stat rotating file: %q, err: %s", r.file, err)
+		}
+		r.used = info.Size()
+		// determines whether the left file meets the rotation condition
+		if r.used > r.option.MaxSize {
+			if err = r.rotate(); err != nil {
+				return err
+			}
+		}
+	}
+	r.writer = writer
+	return nil
+}
+
+// createFile creates a new file with the specified name and permission bits.
+// It creates the folder if it does not exist.
+func (r *RotatingFile) createFile(file string, flag int, perm os.FileMode) (fd *os.File, err error) {
+	fd, err = osOpenFile(file, flag, perm)
+	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			err = osMkdirAll(r.folder, os.ModePerm)
+			if err != nil {
+				return nil, errors.Newf("failed to create rotating folder: %s, err: %s", r.folder, err)
+			}
+			return osOpenFile(file, flag, perm)
 		}
-		return errors.Newf("failed to rename back rotating file, err: %s", err)
 	}
-	// create new rotating file
-	return b.makeRotateFile(filename)
+	return fd, err
 }
 
-// filename generates the name of the rotating file from the current time.
-func (b *baseRotateFile) filename() string {
-	var sb strings.Builder
-	folder := b.Folder()
-	if folder == "" {
-		sb.Grow(len(b.name) + len(b.ext))
-	} else {
-		sb.Grow(len(folder) + 1 + len(b.name) + len(b.ext))
-		sb.WriteString(folder)
-		sb.WriteByte(os.PathSeparator)
+// rotate closes the current file descriptor and creates a new rotated file.
+// It also attempts to clean up and compress the backups files asynchronously.
+func (r *RotatingFile) rotate() error {
+	err := r.close()
+	if err != nil {
+		return errors.Newf("failed to close file: %s, err: %s", r.file, err)
 	}
-	sb.WriteString(b.name)
-	sb.WriteString(b.ext)
-	return sb.String()
+	// when both Backups and MaxAge are not equal to 0, a new file is created.
+	if r.option.Backups != 0 && r.option.MaxAge != 0 {
+		backupFile := filepath.Join(r.folder, r.nextBackupFilename())
+		err = osRename(r.file, backupFile)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				errors.Warningf("failed to backup file: %q, err: %s", r.file, err)
+			} else {
+				return errors.Newf("failed to backup file: %q, err: %s", backupFile, err)
+			}
+		}
+		// cleanup expired backups and compress backup files
+		r.tidyBackups()
+	}
+	// ensure the file is truncated before writing to it.
+	fd, err := r.createFile(r.file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, r.option.ModePerm)
+	if err != nil {
+		return errors.Newf("failed to open rotating file: %s", err)
+	}
+	r.writer = fd
+	// update rotatingTime and reset timer if used time-based rotation is enabled
+	if r.option.Duration > 0 {
+		r.rotatingTime = time.Now()
+		r.timer.Reset(r.option.Duration)
+	}
+	if r.option.MaxSize > 0 {
+		r.used = 0
+	}
+	return nil
 }
 
-// backupFile returns a backup filepath
-func (b *baseRotateFile) backupFile() string {
-	var sb strings.Builder
-	name := b.backupName(time.Now())
-	folder := b.Folder()
-	sb.Grow(len(folder) + 1 + len(name))
-	sb.WriteString(folder)
-	sb.WriteByte(os.PathSeparator)
-	sb.WriteString(name)
-	return sb.String()
-}
-
-// backupName returns the backups file name based on the time passed in
-func (b *baseRotateFile) backupName(t time.Time) string {
-	date := t.Format(b.backupTimeFormat)
-	var sb strings.Builder
-	sb.Grow(len(b.name) + len(date) + len(b.ext) + 1)
-	sb.WriteString(b.name)
+// nextBackupFilename returns the name of the next backup file.
+func (r *RotatingFile) nextBackupFilename() string {
+	sb := &strings.Builder{}
+	sb.Grow(len(r.option.BackupPrefix) + saltWidth + 1 + len(r.filename))
+	sb.WriteString(r.option.BackupPrefix)
+	text := lib.RandString(saltWidth)
+	sb.WriteString(text)
 	sb.WriteByte('-')
-	sb.WriteString(date)
-	sb.WriteString(b.ext)
+	sb.WriteString(r.filename)
 	return sb.String()
 }
 
-// makeRotateFile creates a new rotating file
-func (b *baseRotateFile) makeRotateFile(filename string) error {
-	err := os.MkdirAll(b.folder, os.ModePerm)
-	if err != nil {
-		return errors.Newf("failed to create new log file: %s, err: %s", filename, err)
-	}
-	// the file will be cleaned when others created it
-	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, b.modePerm)
-	if err != nil {
-		return errors.Newf("failed to create new log file: %s, err: %s", filename, err)
-	}
-	b.fd = f
-	return nil
-}
-
-// close the file if it is open
-func (b *baseRotateFile) close() error {
-	if b.fd == nil {
-		return nil
-	}
-	err := b.fd.Close()
-	b.fd = nil
-	if err != nil {
-		return errors.Newf("failed to close %s, err: %s", b.filename(), err)
-	}
-	return nil
-}
-
-// isRotatingFile determines whether the pass file name is a backup of the rotated file
-func (b *baseRotateFile) isRotatingFile(name string) bool {
-	return len(name) >= len(b.name)+len(b.ext)+len(b.backupTimeFormat)+1 &&
-		strings.HasPrefix(name, b.name) &&
-		strings.HasSuffix(name, b.ext)
-}
-
-// getBackupFiles returns a list of all current backup files
-func (b *baseRotateFile) getBackupFiles() ([]string, error) {
-	fs, err := os.ReadDir(b.folder)
-	if err != nil {
-		return nil, errors.Newf("cannot read log folder: %s, err: %s", b.folder, err)
-	}
-	folder := b.Folder()
-	var sb strings.Builder
-	var backups []string
-	for _, f := range fs {
-		if f.IsDir() || !b.isRotatingFile(f.Name()) {
-			continue
-		}
-		sb.Grow(len(folder) + 1 + len(f.Name()))
-		sb.WriteString(folder)
-		sb.WriteByte(os.PathSeparator)
-		sb.WriteString(f.Name())
-		backups = append(backups, sb.String())
-		sb.Reset()
-	}
-	return backups, nil
-}
-
-// clean clean up expired backup files
-func (b *baseRotateFile) clean() error {
-	if b.backups == 0 && b.age == 0 {
-		return nil
-	}
-	backups, err := b.getBackupFiles()
-	if err != nil {
-		return err
-	}
-	// sort the backup files
-	// Because the file names are generated uniformly, they are generally sorted by file name,
-	// which is also sorted by time. Problems may occur when the time format is modified.
-	sort.Strings(backups)
-	backups, err = b.cleanByBackups(backups)
-	return errors.Join(err, b.cleanByAges(backups))
-}
-
-// cleanByBackups expiring backup files are cleaned up based on the number of backup
-func (b *baseRotateFile) cleanByBackups(orderBackups []string) ([]string, error) {
-	if b.backups == 0 || len(orderBackups) < b.backups {
-		return orderBackups, nil
-	}
-	var err error
-	gap := len(orderBackups) - b.backups
-	for _, file := range orderBackups[:gap] {
-		err = errors.Join(err, os.Remove(file))
-	}
-	if err != nil {
-		return nil, errors.Newf("remove backup failed, err: %s", err)
-	}
-	return orderBackups[gap:], nil
-}
-
-// cleanByAges expiring backup files are cleaned up based on the live age
-func (b *baseRotateFile) cleanByAges(backups []string) (err error) {
-	if b.age == 0 || len(backups) == 0 {
-		return nil
-	}
-	expire := time.Now().Add(-b.age)
-	oldest := b.backupName(expire)
-	gap := len(b.Folder()) + 1
-	for i := range backups {
-		if backups[i][gap:] <= oldest {
-			err = errors.Join(os.Remove(backups[i]))
-		}
-	}
-	return err
-}
-
-// cleanBackups clean up expired backups
-// checks whether there is any goroutine performing the cleaning operation.
-// If so, abandon the cleanup. If not, start the cleanup.
-func (b *baseRotateFile) cleanBackups(block bool) error {
+// tidyBackups deletes the expired backups and compresses backup files
+func (r *RotatingFile) tidyBackups() {
 	// existed a running cleanup goroutine
-	if !b._cleaning.CompareAndSwap(false, true) {
-		return nil
-	}
-	// block the groutine until the clean finished
-	if block {
-		defer b._cleaning.Store(false)
-		return b.clean()
+	if !r.cleaning.CompareAndSwap(false, true) {
+		return
 	}
 	// start a cleanup goroutine to delete the expired backups
 	go func() {
-		defer b._cleaning.Store(false)
-		errors.Warning(b.clean())
-	}()
-	return nil
-}
-
-// useLeftoverFile use leftover files as rotating file
-// raise no such file err when the leftover file not found in folder
-func (b *baseRotateFile) useLeftoverFile(filename string) error {
-	fd, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, b.modePerm)
-	if err != nil {
-		return errors.Newf("failed to open rotating file: %q, err: %s", filename, err)
-	}
-	b.fd = fd
-	return nil
-}
-
-// DurationRotateFile represents a file rotation mechanism based on a specified time duration.
-// It utilizes a timer to automatically create new files for data logging or storage
-// at regular intervals, allowing for the management of large or continuously growing files.
-type DurationRotateFile struct {
-	baseRotateFile
-	// duration specifies the time interval after which a new file should be created
-	// for further data logging or storage. This value represents the duration between
-	// file rotations.
-	duration time.Duration
-	// timer is a pointer to a time.Timer that is used to schedule the next file rotation
-	// based on the duration specified. When the timer expires, a new file is created
-	// and the timer is reset for the next rotation.
-	timer *time.Timer
-}
-
-var _ RotateFiler = (*DurationRotateFile)(nil)
-
-// NewDurationRotateFile create a duration rotating file object.
-func NewDurationRotateFile(file string, duration time.Duration) (*DurationRotateFile, error) {
-	if duration < 0 {
-		return nil, InvalidDurationError
-	}
-	if duration < time.Hour {
-		errors.Warning("duration < 1 hour, it will created lots of backup files")
-	}
-	f := &DurationRotateFile{
-		duration:       duration,
-		baseRotateFile: newBaseRotateFile(),
-	}
-	if file != "" {
-		file = paths.ToAbsPath(file)
-		if info, err := os.Stat(file); err == nil && info.IsDir() {
-			return nil, InvalidRotateFileError
+		defer r.cleaning.Store(false)
+		bks, err := r.cleanBackups()
+		errors.Warning(err)
+		// compress backup files if compressLevel > 0
+		if r.option.CompressLevel <= 0 {
+			return
 		}
-		f.folder, f.name, f.ext = paths.SplitWithExt(file)
-	}
-	go func() {
-		for {
-			if f.timer != nil {
-				select {
-				case <-f.timer.C:
-					if err := f.Rotate(f.block); err != nil {
-						errors.Warning(err)
-					}
-				}
+		for _, bk := range bks {
+			// avoid compressed file
+			if !strings.HasSuffix(bk.file, compressExtension) {
+				errors.Warning(compressFile(
+					bk.file,
+					bk.file+compressExtension,
+					r.option.CompressLevel))
 			}
 		}
 	}()
-	return f, nil
 }
 
-// DefaultDurationRotateFile returns default durationRotateFile
-func DefaultDurationRotateFile() *DurationRotateFile {
-	return &defaultDurationRotateFile
-}
+// cleanBackups performs garbage collection (cleanup) of old backup files.
+// It deletes the oldest backup files until the maximum number of backup files is reached.
+func (r *RotatingFile) cleanBackups() ([]backupFile, error) {
 
-var defaultDurationRotateFile = DurationRotateFile{
-	duration:       defaultDuration,
-	baseRotateFile: newBaseRotateFile(),
-	timer:          time.NewTimer(defaultDuration),
-}
-
-// SetDuration set rotating duration
-func (d *DurationRotateFile) SetDuration(duration time.Duration) error {
-	if duration < time.Second {
-		return InvalidDurationError
+	backups, err := r.sortBackups()
+	if err != nil {
+		return nil, err
 	}
-	if duration < time.Hour {
-		errors.Warning("duration < 1 hour, it will created lots of backup files")
-	}
-	d.duration = duration
-	return nil
-}
 
-// Rotate files according to the size and age.
-func (d *DurationRotateFile) Rotate(block bool) error {
-	d.mtx.Lock()
-	defer d.mtx.Unlock()
-	return d.rotate(block)
-}
+	length := len(backups)
+	if length == 0 {
+		return nil, nil
+	}
 
-// rotate file and reset timer
-func (d *DurationRotateFile) rotate(block bool) error {
-	if err := d.baseRotateFile.rotate(); err != nil {
-		return err
-	}
-	if err := d.setTimer(d.duration); err != nil {
-		return err
-	}
-	// clean old backups
-	return d.cleanBackups(block)
-}
-
-// setTimer reset the timer if timer is existed else create a new timer for rotating
-func (d *DurationRotateFile) setTimer(duration time.Duration) error {
-	if duration < 1 {
-		return InvalidDurationError
-	}
-	if d.timer == nil {
-		d.timer = time.NewTimer(duration)
-	} else {
-		if !d.timer.Reset(duration) {
-			return ResetTimerError
+	deleteIndex := 0
+	// calculate the index of the oldest backup file to delete based on Backups
+	if r.option.Backups > 0 {
+		if left := length - r.option.Backups; left > 0 {
+			deleteIndex = left
 		}
 	}
-	return nil
-}
 
-// Write implements io.Writer.
-// It will create if file not found in folder else use the leftover file.
-func (d *DurationRotateFile) Write(p []byte) (int, error) {
-	d.mtx.Lock()
-	defer d.mtx.Unlock()
-	if d.fd == nil {
-		if err := d.montRotateFile(d.filename()); err != nil {
-			return 0, err
+	// calculate the index of the oldest backup file to delete based on MaxAge
+	if r.option.MaxAge > 0 {
+		expired := time.Now().Add(-r.option.MaxAge)
+		index := slices.IndexFunc(backups, func(backup backupFile) bool {
+			return expired.Equal(backup.modTime) || expired.Before(backup.modTime)
+		})
+		if index == -1 {
+			deleteIndex = length
+		} else {
+			deleteIndex = lib.Max(index, deleteIndex)
 		}
 	}
-	return d.fd.Write(p)
+	if deleteIndex > 0 {
+		deleteBackupFiles(backups[:deleteIndex])
+	}
+	return backups[deleteIndex:], nil
 }
 
-// montRotateFile create rotating file if the rotate file not found in folder else
-// use the leftover file.
-func (d *DurationRotateFile) montRotateFile(file string) error {
-	info, err := os.Stat(file)
-	// creates the rotating file when not found
-	if os.IsNotExist(err) {
-		if err = d.setTimer(d.duration); err != nil {
-			return err
+// sortBackups returns a list of backup files sorted by modification time.
+func (r *RotatingFile) sortBackups() ([]backupFile, error) {
+	files, err := osReadDir(r.folder)
+	if err != nil {
+		return nil, errors.Newf("failed to list backup files, err: %s", err)
+	}
+	backups := make([]backupFile, 0, len(files))
+	var info os.FileInfo
+	for index := range files {
+		name := files[index].Name()
+
+		if files[index].IsDir() ||
+			!strings.HasPrefix(name, r.option.BackupPrefix) ||
+			// backup file and compressed file
+			!(strings.HasSuffix(name, r.filename) || strings.HasSuffix(name, r.filename+compressExtension)) {
+			continue
 		}
-		return d.makeRotateFile(file)
+		info, err = files[index].Info()
+		if err != nil {
+			return nil, errors.Newf("failed to get file: %q, err: %s", name, err)
+		}
+		bk := backupFile{
+			file:    filepath.Join(r.folder, name),
+			modTime: info.ModTime(),
+		}
+		backups = append(backups, bk)
+	}
+	// sort backups by modification time
+	sort.Slice(backups, func(i, j int) bool {
+		return backups[i].modTime.Before(backups[j].modTime)
+	})
+	return backups, nil
+}
+
+// SetOption is configuring rotating file function types
+type SetOption func(*Option) error
+
+func WithMaxSize(size int64) SetOption {
+	return func(opt *Option) error {
+		if size > 0 && size < 1<<12 {
+			errors.Warningf("too small max size:%d, it may cause frequent rotation", size)
+		}
+		opt.MaxSize = size
+		return nil
+	}
+}
+
+func WithMaxAge(age time.Duration) SetOption {
+	return func(opt *Option) error {
+		if age < 0 {
+			errors.Warningf("max age:%s is less than zero, not limited by max age", age)
+		}
+		opt.MaxAge = age
+		return nil
+	}
+}
+
+func WithBackups(backups int) SetOption {
+	return func(opt *Option) error {
+		if backups < 0 {
+			errors.Warningf("backups:%d is less than zero, not limited by backups", backups)
+		}
+		opt.Backups = backups
+		return nil
+	}
+}
+
+func WithBackupPrefix(prefix string) SetOption {
+	return func(opt *Option) error {
+		length := len(prefix)
+		if length == 0 || length > 128 {
+			return InvalidBackupPrefixError
+		}
+		for _, char := range prefix {
+			if !unicode.IsLetter(char) && char != '-' {
+				return errors.Newf("backup prefix contains invalid character '%c'", char)
+			}
+		}
+		opt.BackupPrefix = prefix
+		return nil
+	}
+}
+
+func WithModePerm(perm os.FileMode) SetOption {
+	return func(opt *Option) error {
+		if perm&writeMode == 0 {
+			return ModePermissionError
+		}
+		opt.ModePerm = perm
+		return nil
+	}
+}
+
+func WithCompressLevel(level int) SetOption {
+	return func(opt *Option) error {
+		// level <= 0 means no compression
+		if level > 9 {
+			return InvalidCompressionLevelError
+		}
+		opt.CompressLevel = level
+		return nil
+	}
+}
+
+func WithDuration(duration time.Duration) SetOption {
+	return func(opt *Option) error {
+		if duration > 0 && duration < time.Hour {
+			errors.Warningf("too short duration:%s, it may cause frequent rotation", duration)
+		}
+		opt.Duration = duration
+		return nil
+	}
+}
+
+// NewRotatingFile creates a new rotating file with the specified options.
+func NewRotatingFile(file string, opts ...SetOption) (*RotatingFile, error) {
+
+	absFile, err := paths.Abs(file)
+	if err != nil {
+		return nil, err
+	}
+
+	folder, filename := filepath.Split(absFile)
+	r := &RotatingFile{
+		file:     absFile,
+		folder:   folder,
+		filename: filename,
+		option:   defaultOption.clone(),
+	}
+
+	// config rotating file options
+	for _, opt := range opts {
+		if opt != nil {
+			err = errors.Join(err, opt(r.option))
+		}
 	}
 	if err != nil {
-		return errors.Newf("failed to open file: %q, err: %s", file, err)
-	}
-	// open the leftover rotating file
-	now := time.Now()
-	expired := paths.GetFdCreated(info).Add(d.duration)
-	// use the leftover file if it is not expired
-	if expired.After(now) {
-		// update rotate timer
-		if err = d.setTimer(expired.Sub(now)); err != nil {
-			return err
-		}
-		return d.useLeftoverFile(file)
-	}
-	return d.rotate(d.block)
-}
-
-// Close implements io.Closer, and closes the current rotating file.
-func (d *DurationRotateFile) Close() error {
-	d.mtx.Lock()
-	defer d.mtx.Unlock()
-	if d.timer != nil {
-		d.timer.Stop()
-		d.timer = nil
-	}
-	return d.close()
-}
-
-// SizeRotateFile represents a log rotation file structure that triggers rotation based on file size.
-// When the amount of log data written to the file reaches a predefined size limit,
-// a new log file is automatically created to continue logging.
-// This struct embeds the baseRotateFile which provides the fundamental log rotation capabilities.
-type SizeRotateFile struct {
-	// size defines the threshold size (in bytes) that triggers log file rotation.
-	// When the used space in the log file exceeds this value, a new log file is created.
-	size int64
-
-	// used tracks the amount of space already used in the current log file (in bytes).
-	// This value increases as log data is written and resets to 0 when the size threshold is reached.
-	used int64
-	baseRotateFile
-}
-
-var _ RotateFiler = (*SizeRotateFile)(nil)
-
-// NewSizeRotateFile create a size rotating file object.
-func NewSizeRotateFile(file string, size int64) (*SizeRotateFile, error) {
-
-	if size <= 0 {
-		return nil, errors.Newf("size will be set 64MB when size is 0")
-	}
-	f := &SizeRotateFile{
-		size:           size,
-		baseRotateFile: newBaseRotateFile(),
+		return nil, errors.Newf("failed to set option, err: %s", err)
 	}
 
-	if file != "" {
-		file = paths.ToAbsPath(file)
-		if info, err := os.Stat(file); err == nil && info.IsDir() {
-			return nil, InvalidRotateFileError
-		}
-		f.folder, f.name, f.ext = paths.SplitWithExt(file)
+	// active daemon goroutine
+	if r.option.Duration > 0 {
+		r.timer = time.NewTimer(r.option.Duration)
+		go func() {
+			for {
+				select {
+				case now := <-r.timer.C:
+					func() {
+						r.mtx.Lock()
+						defer r.mtx.Unlock()
+						if r.writer != nil && now.Sub(r.rotatingTime) > r.option.Duration {
+							errors.Warning(r.rotate())
+						}
+					}()
+				default:
+				}
+			}
+		}()
 	}
-	return f, nil
-}
-
-// DefaultSizeRotateFile returns default defaultSizeRotateFile
-func DefaultSizeRotateFile() *SizeRotateFile {
-	return &defaultSizeRotateFile
-}
-
-var defaultSizeRotateFile = SizeRotateFile{
-	size:           defaultSize,
-	baseRotateFile: newBaseRotateFile(),
-}
-
-// SetSize set rotating size
-func (s *SizeRotateFile) SetSize(size int) error {
-
-	// invalid size
-	if size <= 0 {
-		return InvalidSizeError
-	}
-
-	// 4Mb
-	if size < 1<<22 {
-		errors.Warning("file size < 4MB will likely result in a large number of backups of the rotated file.")
-	}
-
-	s.size = int64(size)
-	return nil
-}
-
-// Rotate files according to the size and age.
-func (s *SizeRotateFile) Rotate(block bool) error {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-	return s.rotate(block)
-}
-
-// rotate rotate file and reset the used = 0
-func (s *SizeRotateFile) rotate(block bool) error {
-	if err := s.baseRotateFile.rotate(); err != nil {
-		return err
-	}
-	s.used = 0
-	// clean old backups
-	return s.cleanBackups(block)
-}
-
-// Write implements io.Writer.
-// when the file does not exist, the file will be created implicitly. each time writing is completed,
-// it will check whether the file exceeds the limit(user > size). When the limit is exceeded, the
-// current file will be saved as a backup and a new file with the same name will be created to replace
-// the original file.
-func (s *SizeRotateFile) Write(p []byte) (n int, err error) {
-
-	sLen := int64(len(p))
-	if sLen > s.size {
-		return 0, errors.Newf("write length %d exceeds maximum file size %d", sLen, s.size)
-	}
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-	if s.fd == nil {
-		if err = s.montRotateFile(s.filename()); err != nil {
-			return 0, err
-		}
-	}
-	n, err = s.fd.Write(p)
-	if err != nil {
-		return n, errors.Newf("failed to write %s, err: %s", s.filename(), err)
-	}
-	s.used += int64(n)
-	if s.used < s.size {
-		return n, nil
-	}
-	return n, s.rotate(s.block)
-}
-
-// montRotateFile create rotating file if the rotate file not found in folder else
-// use the leftover file.
-func (s *SizeRotateFile) montRotateFile(file string) error {
-
-	info, err := os.Stat(file)
-	// creates the rotating file when not found
-	if os.IsNotExist(err) {
-		// cannot ensure the `used` is zero
-		s.used = 0
-		return s.makeRotateFile(file)
-	}
-	if err != nil {
-		return errors.Newf("failed to open file: %q, err: %s", file, err)
-	}
-	// open the leftover rotating file and update `used`
-	if info.Size() < s.size {
-		s.used = info.Size()
-		return s.useLeftoverFile(file)
-	}
-	return s.rotate(s.block)
-}
-
-// Close implements io.Closer, and closes the current logfile.
-func (s *SizeRotateFile) Close() error {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-	return s.close()
+	return r, nil
 }

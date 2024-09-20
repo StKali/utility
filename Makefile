@@ -1,16 +1,31 @@
 PROGRAM=utility
 REMOVE=@rm -f
+PRINT=@echo
+GO=@go
 
-# cover
-COVERFILE=cover.out
-COVERHTML=coverage.html
+COVER_FILE=cover.out
+COVER_HTML=coverage.html
+TEMPORARY=temporary
 
-test:
-	go test -v ./... -coverprofile=$(COVERFILE)
-	echo "start render coverage report to $(COVERHTML)"
-	go tool cover --html=cover.out -o $(COVERHTML)
-	echo "create coverage report at: $(COVERHTML)"
+test: mock
+	$(GO) test -v ./... -coverprofile=$(COVER_FILE)
+	$(PRINT) "Start render coverage report to $(COVER_HTML)."
+	$(GO) tool cover --html=cover.out -o $(COVER_HTML)
+	$(PRINT) "create coverage report at: $(COVER_HTML)."
+
+mock:
+	$(GO) generate ./...
+	$(PRINT) "Successfully generate mock files."
 
 clean:
-	$(REMOVE) $(COVERFILE) $(COVERHTML) main.go
+	$(REMOVE) $(COVER_FILE) $(COVER_HTML) $(TEMPORARY) *.log *.out *.prof *.test *.test.log main.go
+	$(PRINT) "Clean up done"
 
+env:
+	$(PRINT) "Initializing environment..."
+	$(GO) mod download
+	$(PRINT) "Successfully downloaded dependencies."
+	@./scripts/setup_env.sh
+	$(PRINT) "Successfully installed build toolchain."
+
+.PHONY: test mock clean env

@@ -1,3 +1,9 @@
+// Copyright 2021-2024 The utility Authors. All rights reserved.
+// Use of this source code is governed by the MIT license that can be found in the
+// LICENSE file
+
+// Package paths provides utility functions for working with file and directory paths.
+
 package paths
 
 import (
@@ -16,7 +22,7 @@ var (
 	onceUserHome sync.Once
 	userHome     string
 	// for test
-	makeAll = os.MkdirAll
+	osMakeAll = os.MkdirAll
 )
 
 // UserHome return current user home path string
@@ -108,7 +114,7 @@ func OpenFile(file string, flag int, perm os.FileMode) (fd *os.File, err error) 
 	if err != nil {
 		if os.IsNotExist(err) {
 			directory := filepath.Dir(file)
-			err = makeAll(directory, os.ModePerm)
+			err = osMakeAll(directory, os.ModePerm)
 			if err != nil {
 				return nil, errors.Newf("failed to create directory: %q, err: %s", directory, err)
 			}
@@ -116,4 +122,20 @@ func OpenFile(file string, flag int, perm os.FileMode) (fd *os.File, err error) 
 		}
 	}
 	return fd, err
+}
+
+// Clear removes all files and directories in the specified directory.
+func Clear(dir string) error {
+	fs, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, f := range fs {
+		if f.IsDir() {
+			err = errors.Join(err, os.RemoveAll(filepath.Join(dir, f.Name())))
+		} else {
+			err = errors.Join(err, os.Remove(filepath.Join(dir, f.Name())))
+		}
+	}
+	return err
 }

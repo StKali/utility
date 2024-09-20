@@ -1,12 +1,12 @@
 package paths
 
 import (
+	"github.com/stkali/utility/lib"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestSplitWithExt(t *testing.T) {
@@ -175,11 +175,11 @@ func TestOpenFile(t *testing.T) {
 
 	// failed to create directory
 	file = filepath.Join(testDir, "not-exited-dir2", "not-existed-file")
-	originMakeAll := makeAll
+	originMakeAll := osMakeAll
 	defer func() {
-		makeAll = originMakeAll
+		osMakeAll = originMakeAll
 	}()
-	makeAll = func(path string, perm os.FileMode) error {
+	osMakeAll = func(path string, perm os.FileMode) error {
 		return InvalidPathError
 	}
 	fd, err = OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o777)
@@ -191,4 +191,59 @@ func TestAbs(t *testing.T) {
 		_, err := Abs("")
 		require.ErrorIs(t, err, InvalidPathError)
 	})
+}
+
+// /var/folders/k0/nf8vpwfj4_b1y0b_mc4h35fc0000gn/T/TestClear3793610792/001/CWJRYYJmBBLd
+// /var/folders/k0/nf8vpwfj4_b1y0b_mc4h35fc0000gn/T/TestClear3793610792/001/CWJRYYJmBBLd
+func TestClear(t *testing.T) {
+
+	err := Clear(lib.RandInternalString(32, 64))
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	testDir := t.TempDir()
+	defer os.RemoveAll(testDir)
+	err = Clear(testDir)
+	require.NoError(t, err)
+
+	// create 10 files
+	for i := 0; i < 10; i++ {
+		file := filepath.Join(testDir, lib.RandInternalString(10, 20))
+		f, err := os.Create(file)
+		require.NoError(t, err)
+		text := lib.RandInternalString(10, 30)
+		n, err := f.WriteString(text)
+		require.NoError(t, err)
+		require.Equal(t, len(text), n)
+		err = f.Close()
+		require.NoError(t, err)
+	}
+	files, err := os.ReadDir(testDir)
+	require.NoError(t, err)
+	require.Equal(t, 10, len(files))
+
+	// create sub dir
+	subDir := filepath.Join(testDir, "sub")
+	err = os.Mkdir(subDir, 0o777)
+	require.NoError(t, err)
+	// create 5 files in sub dir
+	for i := 0; i < 5; i++ {
+		file := filepath.Join(subDir, lib.RandInternalString(10, 20))
+		f, err := os.Create(file)
+		require.NoError(t, err)
+		text := lib.RandInternalString(10, 30)
+		n, err := f.WriteString(text)
+		require.NoError(t, err)
+		require.Equal(t, len(text), n)
+		err = f.Close()
+		require.NoError(t, err)
+	}
+	files, err = os.ReadDir(subDir)
+	require.NoError(t, err)
+	require.Equal(t, 5, len(files))
+
+	err = Clear(testDir)
+	require.NoError(t, err)
+	files, err = os.ReadDir(testDir)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(files))
 }
