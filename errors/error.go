@@ -13,7 +13,8 @@ var (
 	Is    = stderr.Is
 	As    = stderr.As
 	Error = stderr.New
-	exit  = os.Exit
+	// for testing
+	osExit = os.Exit
 )
 
 // iErr represents a custom error type that can hold multiple errors and a tracer.
@@ -206,7 +207,7 @@ func Exit(code int) {
 	if exitHook != nil {
 		exitHook(code, "", GetTrace(3))
 	}
-	exit(code)
+	osExit(code)
 }
 
 // Exitf prints a formatted error message to the error output, calls the exit hook (if set),
@@ -225,7 +226,7 @@ func Exitf(code int, format string, args ...any) {
 	if exitHook != nil {
 		exitHook(code, msg, GetTrace(3))
 	}
-	exit(code)
+	osExit(code)
 }
 
 // CheckErr prints an error message with the set prefix to stderr and exits the program with code 1
@@ -251,5 +252,5 @@ func CheckErr(err any) {
 		}
 		exitHook(1, msg, tracer)
 	}
-	exit(1)
+	osExit(1)
 }

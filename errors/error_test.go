@@ -32,15 +32,15 @@ func TestIs(t *testing.T) {
 }
 
 func TestExit(t *testing.T) {
-	originExit := exit
+	originExit := osExit
 	defer func() {
-		exit = originExit
+		osExit = originExit
 	}()
 	actualExitCode := 0
 	mockExit := func(code int) {
 		actualExitCode = code
 	}
-	exit = mockExit
+	osExit = mockExit
 	wantExitCode := 100
 	SetExitHook(func(code int, msg string, tracer Tracer) {
 		require.Equal(t, msg, "")
@@ -61,9 +61,9 @@ func TestExitf(t *testing.T) {
 	mockExit := func(code int) {
 		actualCode = code
 	}
-	oldExit := exit
-	exit = mockExit
-	defer func() { exit = oldExit }()
+	oldExit := osExit
+	osExit = mockExit
+	defer func() { osExit = oldExit }()
 
 	t.Run("errPrefix", func(t *testing.T) {
 		// prefix == ""
@@ -217,10 +217,10 @@ func TestCheckErr(t *testing.T) {
 		},
 	}
 	var wantExitCode int
-	originExit := exit
+	originExit := osExit
 	mockExit := func(code int) { wantExitCode = code }
-	exit = mockExit
-	defer func() { exit = originExit }()
+	osExit = mockExit
+	defer func() { osExit = originExit }()
 
 	originErrPrefix := errPrefix
 	defer func() {
