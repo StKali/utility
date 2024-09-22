@@ -9,7 +9,7 @@ TEMPORARY=temporary
 
 all: test clean
 
-test: env mock
+test: setup mock
 	$(GO) test -v ./... -coverprofile=$(COVER_FILE)
 	$(PRINT) "Start render coverage report to $(COVER_HTML)."
 	$(GO) tool cover --html=cover.out -o $(COVER_HTML)
@@ -20,14 +20,18 @@ mock:
 	$(PRINT) "Successfully generate mock files."
 
 clean:
-	$(REMOVE) $(COVER_FILE) $(COVER_HTML) $(TEMPORARY) *.log *.out *.prof *.test *.test.log main.go
+	$(REMOVE) $(COVER_FILE) $(COVER_HTML) *.log *.out *.prof *.test *.test.log main.go
+	 $(REMOVE) -r $(TEMPORARY)
 	$(PRINT) "Clean up done"
 
-env:
-	$(PRINT) "Initializing environment..."
+setup:
+	$(PRINT) "Installing dependencies..."
+	$(GO) mod tidy
 	$(GO) mod download
-	$(PRINT) "Successfully downloaded dependencies."
-	@./scripts/setup_env.sh
-	$(PRINT) "Successfully installed build toolchain."
+	$(PRINT) "Successfully installed dependencies."
+	$(GO) install go.uber.org/mock/mockgen@latest
+	$(PRINT) "Successfully installed mockgen."
+	$(PRINT) "Successfully installed go toolchain."
 
-.PHONY: test mock clean env
+
+.PHONY: test mock clean env setup

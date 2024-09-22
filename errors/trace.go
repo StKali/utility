@@ -10,7 +10,7 @@ import (
 // Tracer is an interface that represents a stack trace.
 // It provides methods to print or manipulate the stack trace.
 type Tracer interface {
-	StackTrace(fd io.Writer)
+	Traceback(fd io.Writer)
 	RangeFrames(handle func(frame runtime.Frame))
 	fmt.Stringer
 }
@@ -25,7 +25,7 @@ type trace []uintptr
 // String implements fmt.Stringer.
 func (t trace) String() string {
 	buf := &bytes.Buffer{}
-	t.StackTrace(buf)
+	t.Traceback(buf)
 	return buf.String()
 }
 
@@ -47,19 +47,19 @@ func (t trace) RangeFrames(handle func(frame runtime.Frame)) {
 	}
 }
 
-func defaultFrameHandle(frame runtime.Frame) {
-	_, _ = fmt.Fprintf(errOutput, "    %s(...)\n", frame.Function)
-	_, _ = fmt.Fprintf(errOutput, "         %s:%d\n", frame.File, frame.Line)
-}
-
-// StackTrace writes a formatted stack trace to the provided io.Writer.
+// Traceback writes a formatted stack trace to the provided io.Writer.
 // It uses a default handler that prints the function name and file/line information for each frame.
-func (t trace) StackTrace(fd io.Writer) {
+func (t trace) Traceback(fd io.Writer) {
 	_, _ = fmt.Fprintln(fd, "Traceback:")
 	t.RangeFrames(func(frame runtime.Frame) {
 		_, _ = fmt.Fprintf(fd, "    %s(...)\n", frame.Function)
 		_, _ = fmt.Fprintf(fd, "         %s:%d\n", frame.File, frame.Line)
 	})
+}
+
+func defaultFrameHandle(frame runtime.Frame) {
+	_, _ = fmt.Fprintf(errOutput, "    %s(...)\n", frame.Function)
+	_, _ = fmt.Fprintf(errOutput, "         %s:%d\n", frame.File, frame.Line)
 }
 
 // GetTrace captures the current goroutine's stack trace, skipping the specified number of frames.
@@ -70,16 +70,16 @@ func GetTrace(skip int) Tracer {
 	return pcs[:count]
 }
 
-// StackTrace writes the traceback information of the caller to the specified io.Writer.
+// Traceback writes the traceback information of the caller to the specified io.Writer.
 // It starts capturing the stack trace from the caller's caller (i.e., 3 levels up the call stack
 // to exclude the current function and its immediate caller).
-func StackTrace(fd io.Writer) {
+func Traceback(fd io.Writer) {
 	tc := GetTrace(3)
-	tc.StackTrace(fd)
+	tc.Traceback(fd)
 }
 
 // GetTraceback returns traceback stack string
 func GetTraceback() string {
-	tc := GetTrace(4)
+	tc := GetTrace(3)
 	return tc.String()
 }

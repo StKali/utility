@@ -45,13 +45,17 @@ func SetWarningPrefixf(s string, args ...any) {
 // warn is an internal function that writes a warning message to the specified output.
 // It handles formatting and prefixing the message.
 func warn(format *string, a ...any) {
-	var msg string
+
+	if warningPrefix != "" {
+		_, _ = io.WriteString(warningOutput, warningPrefix)
+		_, _ = io.WriteString(warningOutput, ": ")
+	}
 	if format == nil {
-		buf := make([]byte, 0, 32)
 		var n any
 		for index := range a {
 			if index != 0 {
-				buf = fmt.Append(buf, n, ", ")
+				_, _ = fmt.Fprint(warningOutput, n)
+				_, _ = io.WriteString(warningOutput, ", ")
 			}
 			if e, ok := a[index].(error); ok {
 				n = e.Error()
@@ -59,18 +63,11 @@ func warn(format *string, a ...any) {
 				n = a[index]
 			}
 		}
-		buf = fmt.Append(buf, n)
-		msg = string(buf)
+		_, _ = fmt.Fprint(warningOutput, n)
 	} else {
-		msg = fmt.Sprintf(*format, a...)
+		_, _ = fmt.Fprintf(warningOutput, *format, a...)
 	}
-	if warningPrefix == "" {
-		// If no prefix is set, just write the message.
-		_, _ = fmt.Fprintf(warningOutput, "%s\n", msg)
-	} else {
-		// Prepend the prefix and write the message.
-		_, _ = fmt.Fprintf(warningOutput, "%s: %s\n", warningPrefix, msg)
-	}
+	_, _ = warningOutput.Write([]byte{'\n'})
 }
 
 // Warning writes a warning message to the specified output.

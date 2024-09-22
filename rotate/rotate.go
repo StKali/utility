@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -27,9 +26,11 @@ import (
 )
 
 const (
-	writeMode         = 0o200
-	saltWidth         = 8
-	compressExtension = ".gz"
+	writeMode                = 0o200
+	saltWidth                = 8
+	compressExtension        = ".gz"
+	noCleaning        uint32 = 0
+	cleaning          uint32 = 1
 )
 
 var (
@@ -51,30 +52,30 @@ var (
 // Option is a configuration option for rotating files. default is `defaultOption`
 type Option struct {
 
-	// MaxSize(default: 1 GB) defines the threshold size (in bytes) that triggers a
+	// MaxSize(default: 1 GB) is the threshold value that triggers size-based
 	// file rotation.
 	// <= 0 means no rotation based on file size.
 	MaxSize int64
 
-	// Duration(default: 1 day) specifies the time interval after which a new file
-	// should be created.
+	// Duration(default: 1 day) is the threshold value that triggers time-based
+	// file rotation.
 	// <= 0 means no rotation based on time interval.
 	// NOTE:
-	//   The timer is updated every time rotating, and this includes MaxSize-based updates
+	//   The timer is updated every time rotating, and this includes size-based updates
 	Duration time.Duration
 
-	// MaxAge(default: 30 days) defines the maximum age that a backup file can have before
+	// MaxAge(default: 30 days) is the maximum age that a backup file can have before
 	// it is considered for cleanup.
 	// Files older than this duration will be deleted during the cleanup goroutine.
 	// = 0 means no backup files are retained.
 	// < 0 the backup deletion strategy based on `MaxAge` will not work.
 	MaxAge time.Duration
 
-	// ModePerm(default: 0o644) specifies the default file permission bits used when
+	// ModePerm(default: 0o644) is the default file permission bits used when
 	// creating new rotating files.
 	ModePerm os.FileMode
 
-	// Backups(default: 30) defines the maximum number of backup files that can be
+	// Backups(default: 30) is the maximum number of backup files that can be
 	// retained after rotation. When this limit is reached, the oldest backup file
 	// will be deleted to make space for new ones.
 	// = 0 means no backup files are retained.
@@ -86,7 +87,7 @@ type Option struct {
 	// <= 0 means no compression.
 	CompressLevel int
 
-	// BackupFilePrefix specifies the time format used when creating backup files.
+	// BackupPrefix(default: "rotating-") is the prefix to use when creating backup files.
 	BackupPrefix string
 }
 
@@ -179,7 +180,7 @@ func compressFile(src, dst string, level int) (err error) {
 	if _, err = ioCopy(writer, f); err != nil {
 		return errors.Newf("failed to compress rotating file %q, err: %s", src, err)
 	}
-
+	os.Chtimes(dst, info.ModTime(), info.ModTime())
 	return err
 }
 
@@ -217,7 +218,7 @@ type RotatingFile struct {
 	// cleaning (using an underscore prefix to avoid accidental use as a public field)
 	// is an atomic.Bool that indicates whether a garbage collection (cleanup) task
 	// is currently being executed.
-	cleaning atomic.Bool
+	cleaning uint32
 }
 
 // String implements the Stringer interface for RotatingFile.
@@ -229,19 +230,18 @@ func (r *RotatingFile) String() string {
 // It returns the number of bytes written and an error if any.
 //
 // NOTE:
+// In a size-based rotation strategy, whether rotation is required is judged after writing,
+// not before. This may result in the file being slightly larger than the set `MaxSize`.
+// However, this method has the advantage of ensuring that at least one write operation
+// is allowed to complete.
 //
-//	When rotating files based on the `MaxSize` threshold, the decision to rotate
-//
-// is made after writing occurs, rather than before. This can lead to the issue where
-// files may become slightly larger than the set `MaxSize`. However, the benefit of
-// this approach is that it ensures at least one write operation is allowed to complete.
-//
-//	In scenarios where a single write exceeds the `MaxSize` threshold, continuous file
-//
-// rotation would potentially block program execution due to inability to write further.
-// To prevent this, returning an error to halt such writes could be implemented, but in
-// practical applications, we often prefer not to do so. Therefore, our implementation
-// allows for at least one such oversized write to proceed, even if it exceeds the threshold.
+// In the case of a single write that exceeds "MaxSize", if we determine whether rotation
+// is required before writing, we will be stuck in an infinite rotation, because every write
+// requires rotation first, and we will still face the same problem after rotation. At this
+// point, we would have to prevent the write by returning an error to the upper level, but
+// in practice, we usually don't want this to happen. Therefore, we choose to make the
+// determination after the write so that at least one super-massive write can be performed,
+// both to avoid unnecessary errors and for more extreme cases.
 func (r *RotatingFile) Write(b []byte) (int, error) {
 
 	r.mtx.Lock()
@@ -285,7 +285,11 @@ func (r *RotatingFile) Close() error {
 		return err
 	}
 	// wait for the cleanup goroutine to finish
-	for r.cleaning.Load() {
+	for atomic.LoadUint32(&r.cleaning) == cleaning {
+	}
+	// ensure backup files is tidied up
+	r.tidyBackups()
+	for atomic.LoadUint32(&r.cleaning) == cleaning {
 	}
 	return nil
 }
@@ -403,12 +407,12 @@ func (r *RotatingFile) nextBackupFilename() string {
 // tidyBackups deletes the expired backups and compresses backup files
 func (r *RotatingFile) tidyBackups() {
 	// existed a running cleanup goroutine
-	if !r.cleaning.CompareAndSwap(false, true) {
+	if !atomic.CompareAndSwapUint32(&r.cleaning, noCleaning, cleaning) {
 		return
 	}
 	// start a cleanup goroutine to delete the expired backups
 	go func() {
-		defer r.cleaning.Store(false)
+		defer atomic.StoreUint32(&r.cleaning, noCleaning)
 		bks, err := r.cleanBackups()
 		errors.Warning(err)
 		// compress backup files if compressLevel > 0
@@ -452,9 +456,7 @@ func (r *RotatingFile) cleanBackups() ([]backupFile, error) {
 	// calculate the index of the oldest backup file to delete based on MaxAge
 	if r.option.MaxAge > 0 {
 		expired := time.Now().Add(-r.option.MaxAge)
-		index := slices.IndexFunc(backups, func(backup backupFile) bool {
-			return expired.Equal(backup.modTime) || expired.Before(backup.modTime)
-		})
+		index := findExpiredIndex(backups, expired)
 		if index == -1 {
 			deleteIndex = length
 		} else {
@@ -465,6 +467,16 @@ func (r *RotatingFile) cleanBackups() ([]backupFile, error) {
 		deleteBackupFiles(backups[:deleteIndex])
 	}
 	return backups[deleteIndex:], nil
+}
+
+// findExpiredIndex returns the index of the first backup file that is expired.
+func findExpiredIndex(backups []backupFile, expired time.Time) int {
+	for index := range backups {
+		if expired.Equal(backups[index].modTime) || expired.Before(backups[index].modTime) {
+			return index
+		}
+	}
+	return -1
 }
 
 // sortBackups returns a list of backup files sorted by modification time.
