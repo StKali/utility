@@ -1,3 +1,13 @@
+## 20240922(v2.0.0)
+- feat!: changed the rotate package to support multiple rotation policies
+- refactor!: remove subcommand functions from lib package
+- feat: add some type functions to the lib package
+- refactor: rebuild the package to support go >= 1.18
+- fix: without separator when printing multiple warnings use errors.Warning
+- fix: lib.RandString error when concurrently calling the function
+- ci: add go 1.18 and 1.19 to the CI test matrix
+- style: update the code style to match the go standard, and add some annotations
+
 ## 20240808(v1.2.7)
 
 - refactor: update errors.CheckErr argument type to any

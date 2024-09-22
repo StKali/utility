@@ -295,49 +295,60 @@ func TestRotatingFileCleanBackups(t *testing.T) {
 	require.NoError(t, err)
 	defer f.Close()
 
-	// cannot read directory
-	osReadDir = func(name string) ([]os.DirEntry, error) {
-		return nil, os.ErrInvalid
-	}
-	_, err = f.cleanBackups()
-	require.ErrorIs(t, err, os.ErrInvalid)
-	osReadDir = os.ReadDir
+	t.Run("cannot read directory", func(t *testing.T) {
+		osReadDir = func(name string) ([]os.DirEntry, error) {
+			return nil, os.ErrInvalid
+		}
+		defer func() {
+			osReadDir = os.ReadDir
+		}()
+		_, err = f.cleanBackups()
+		require.ErrorIs(t, err, os.ErrInvalid)
+	})
 
-	// cannot get file stat
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	entry := NewMockDirEntry(ctrl)
-	bkFilename := f.nextBackupFilename()
-	entry.EXPECT().Name().Return(bkFilename)
-	entry.EXPECT().IsDir().Return(false)
-	entry.EXPECT().Info().Return(nil, os.ErrInvalid)
+	t.Run("cannot get file stat", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		entry := NewMockDirEntry(ctrl)
+		bkFilename := f.nextBackupFilename()
+		entry.EXPECT().Name().Return(bkFilename)
+		entry.EXPECT().IsDir().Return(false)
+		entry.EXPECT().Info().Return(nil, os.ErrInvalid)
 
-	osReadDir = func(name string) ([]os.DirEntry, error) {
-		return []os.DirEntry{entry}, nil
-	}
-	_, err = f.cleanBackups()
-	require.ErrorIs(t, err, os.ErrInvalid)
-	osReadDir = os.ReadDir
+		osReadDir = func(name string) ([]os.DirEntry, error) {
+			return []os.DirEntry{entry}, nil
+		}
+		defer func() {
+			osReadDir = os.ReadDir
+		}()
+		_, err = f.cleanBackups()
+		require.ErrorIs(t, err, os.ErrInvalid)
+	})
 
-	// delete all backups by max age
-	// create backup files
-	err = paths.Clear(f.folder)
-	require.NoError(t, err)
-	for i := 0; i < 5; i++ {
-		file, err := os.Create(filepath.Join(f.folder, f.nextBackupFilename()))
+	t.Run("clean by max age", func(t *testing.T) {
+		// delete all backups by max age
+		err = paths.Clear(f.folder)
 		require.NoError(t, err)
-		err = file.Close()
+		for i := 0; i < 5; i++ {
+			file, err := os.Create(filepath.Join(f.folder, f.nextBackupFilename()))
+			require.NoError(t, err)
+			err = file.Close()
+			require.NoError(t, err)
+		}
+		fs, err := f.sortBackups()
 		require.NoError(t, err)
-	}
-	fs, err := f.sortBackups()
-	require.NoError(t, err)
-	require.Equal(t, 5, len(fs))
-	f.option.MaxAge = 100 * time.Millisecond
-	// ensure all backups has been expired
-	time.Sleep(200 * time.Millisecond)
-	bks, err := f.cleanBackups()
-	require.NoError(t, err)
-	require.Equal(t, 0, len(bks))
+		require.Equal(t, 5, len(fs))
+		err = f.Close()
+		require.NoError(t, err)
+
+		// set max age to 100ms
+		f.option.MaxAge = 100 * time.Millisecond
+		time.Sleep(1000 * time.Millisecond)
+		bks, err := f.cleanBackups()
+		require.NoError(t, err)
+		require.Equal(t, 0, len(bks))
+	})
+
 }
 
 func TestRotatingFileRotate(t *testing.T) {
@@ -635,6 +646,10 @@ func TestLogicTidyBackups(t *testing.T) {
 		}
 		// wait for rotate
 		time.Sleep(duration + 200*time.Millisecond)
+		err = f.Close()
+		require.NoError(t, err)
+		// ensure all backups has been compressed
+		f.tidyBackups()
 		err = f.Close()
 		require.NoError(t, err)
 		files, err := f.sortBackups()

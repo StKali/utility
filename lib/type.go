@@ -28,13 +28,34 @@ const (
 // ToString converts a byte slice to a string.
 // The string is not copied, but the underlying memory is shared.
 func ToString(b []byte) string {
-	return unsafe.String(unsafe.SliceData(b), len(b))
+	return *(*string)(unsafe.Pointer(&b))
+}
+
+// SliceHeader is the runtime representation of a slice.
+// references: GOROOT:go/src/reflect/value.go
+type SliceHeader struct {
+	Data uintptr
+	Len  int
+	Cap  int
+}
+
+// StringHeader is the runtime representation of a string.
+// references: GOROOT:go/src/reflect/value.go
+type StringHeader struct {
+	Data uintptr
+	Len  int
 }
 
 // ToBytes converts a string to a byte slice.
 // The string is not copied, but the underlying memory is shared.
 func ToBytes(s string) []byte {
-	return unsafe.Slice(unsafe.StringData(s), len(s))
+	// ensure the cap field is set correctly
+	sliceHeader := SliceHeader{}
+	stringHeader := (*StringHeader)(unsafe.Pointer(&s))
+	sliceHeader.Data = stringHeader.Data
+	sliceHeader.Len = stringHeader.Len
+	sliceHeader.Cap = stringHeader.Len
+	return *(*[]byte)(unsafe.Pointer(&sliceHeader))
 }
 
 // Size2String converts a size in bytes to a string in the format of "1024" or "1024 KB" or "1024 MB" or "1024 GB" or

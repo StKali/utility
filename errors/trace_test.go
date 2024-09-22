@@ -25,11 +25,10 @@ func checkTracebackFormat(t *testing.T, traceback string) {
 	require.True(t, regxMatchFileAndLine.MatchString(traceback))
 }
 
-
 func TestTraceStackTrace(t *testing.T) {
 	tc := GetTrace(3)
 	buf := bytes.Buffer{}
-	tc.StackTrace(&buf)
+	tc.Traceback(&buf)
 	traceback := buf.String()
 	checkTracebackFormat(t, traceback)
 }
@@ -50,7 +49,7 @@ func TestTraceRangeFrames(t *testing.T) {
 	require.True(t, regxMatchFile.MatchString(outString))
 	require.True(t, regxMatchFunc.MatchString(outString))
 	require.True(t, regxMatchLine.MatchString(outString))
-	
+
 	// clear buffer
 	buf.Reset()
 	SetErrOutput(buf)
@@ -68,7 +67,7 @@ func TestTraceString(t *testing.T) {
 
 func TestStackTrace(t *testing.T) {
 	buf := &bytes.Buffer{}
-	StackTrace(buf)
+	Traceback(buf)
 	traceback := buf.String()
 	checkTracebackFormat(t, traceback)
 }
