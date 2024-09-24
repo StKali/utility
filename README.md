@@ -17,13 +17,13 @@ _, err := os.Open(file)
 
 fmt.Println(errors.Is(err, os.ErrNotExist)) // Output: true
 
-//err as a Newf parameter, which will be added to the error chain, along with the traceback
+//err as a Newf parameter, which will be added to the error chain, along with the traceback.
 err = errors.Newf("failed to open file, err: %s", err)
 
-// Returns true because os.ErrNotExist is added to the error chain
+// Returns true because os.ErrNotExist is added to the error chain.
 fmt.Println(errors.Is(err, os.ErrNotExist)) // Output: true
 
-// Returns the error chain
+// Returns the error chain.
 errors.Unwrap(err)
 
 // Output: failed to open file: not exist file.txt
@@ -42,7 +42,7 @@ fmt.Printf("%v\n", err)   // %v will print the traceback
 [👉 more doc](errors/README.md)
 
 ## log
-Package log provides a simple logging with levels
+Package log provides a simple logging with levels.
 
 ```go
 // init log 
@@ -69,7 +69,7 @@ log.Warnf("test number: %d, test nil: %v", 123, nil)
 Package rotate provides a rotating file writer that can be used to write data to.
 
 ```go
-// create a rotating file writer
+// create a rotating file writer.
 f, err := rotate.NewRotatingFile("temporary/test.log",
 		// set maximum file size to 1GB
 		rotate.WithMaxSize(lib.GB),
@@ -95,10 +95,10 @@ defer f.Close()
 
 f.WriteString("hello world\n")
 
-// impletments io.Writer
+// impletments io.Writer.
 f.Write([]byte("hello world\n"))
 
-// set the default logger output to the rotating file
+// set the default logger output to the rotating file.
 log.SetOutput(f) 
 ```
 
