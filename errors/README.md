@@ -115,9 +115,7 @@ trace := errors.GetTrace(2)
 
 
 ## warning
-
-errors 包提供了warning功能，可以方便地输出警告信息。
-
+The errors package provides the warning function, which makes it easy to output warning messages.
 
 
 ### SetWarningPrefix, SetWarningPrefixf

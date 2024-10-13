@@ -1,4 +1,9 @@
-## 20240922(v2.0.0)
+## 20241014(v1.3.1)
+- feat(errors): add ReplaceExit for testing exit code.
+- docs(errors): update errors README.md
+- style(log): remove redundant '//' symbols
+
+## 20240922(v1.3.0)
 - feat!: changed the rotate package to support multiple rotation policies
 - refactor!: remove subcommand functions from lib package
 - feat: add some type functions to the lib package
