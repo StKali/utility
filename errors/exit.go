@@ -2,6 +2,7 @@ package errors
 
 import (
 	"fmt"
+	"github.com/stkali/utility/lib"
 	"io"
 	"os"
 	"strings"
@@ -97,4 +98,17 @@ func CheckErr(err any) {
 		exitHook(1, msg, tracer)
 	}
 	osExit(1)
+}
+
+// ReplaceExit allows to set a custom function to be tested as Exit
+func ReplaceExit(fn func(int)) func() {
+	return lib.Replace(&osExit, fn)
+}
+
+// SetExit allows to set a custom function to be tested as Exit
+func SetExit(exit func(int)) {
+	if exit == nil {
+		return
+	}
+	osExit = exit
 }

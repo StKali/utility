@@ -10,15 +10,10 @@ import (
 )
 
 func TestExit(t *testing.T) {
-	originExit := osExit
-	defer func() {
-		osExit = originExit
-	}()
 	actualExitCode := 0
-	mockExit := func(code int) {
+	defer ReplaceExit(func(code int) {
 		actualExitCode = code
-	}
-	osExit = mockExit
+	})()
 	wantExitCode := 100
 	SetExitHook(func(code int, msg string, tracer Tracer) {
 		require.Equal(t, msg, "")
@@ -36,12 +31,9 @@ func TestExitf(t *testing.T) {
 	var actualMessage string
 	var wantCode int
 	var wantMessage string
-	mockExit := func(code int) {
+	defer ReplaceExit(func(code int) {
 		actualCode = code
-	}
-	oldExit := osExit
-	osExit = mockExit
-	defer func() { osExit = oldExit }()
+	})()
 
 	t.Run("errPrefix", func(t *testing.T) {
 		// prefix == ""
@@ -129,7 +121,6 @@ func TestCheckErr(t *testing.T) {
 	mockExit := func(code int) { wantExitCode = code }
 	osExit = mockExit
 	defer func() { osExit = originExit }()
-
 	originErrPrefix := errPrefix
 	defer func() {
 		SetErrPrefix(originErrPrefix)
@@ -222,4 +213,18 @@ func TestSetErrPrefixf(t *testing.T) {
 	SetErrPrefixf("%s err", "program")
 	prefix := fmt.Sprintf("%s err", "program")
 	require.Equal(t, errPrefix, prefix)
+}
+
+func TestSetExit(t *testing.T) {
+	SetExit(nil)
+	require.True(t, osExit != nil)
+
+	wantCode := 100
+	expectCode := 0
+	SetExit(func(code int) {
+		expectCode = code
+	})
+	Exit(wantCode)
+	require.Equal(t, wantCode, expectCode)
+
 }
