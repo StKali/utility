@@ -113,8 +113,8 @@ func TestJoinReturnsNil(t *testing.T) {
 }
 
 func TestJoin(t *testing.T) {
-	err1 := New("err1")
-	err2 := New("err2")
+	err1 := Error("err1")
+	err2 := Error("err2")
 	cases := []struct {
 		name   string
 		errs   []error
@@ -145,8 +145,8 @@ func TestJoin(t *testing.T) {
 }
 
 func TestJoinErrorMethod(t *testing.T) {
-	err1 := New("err1")
-	err2 := New("err2")
+	err1 := Error("err1")
+	err2 := Error("err2")
 
 	cases := []struct {
 		name   string

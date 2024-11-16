@@ -2,8 +2,6 @@ module github.com/stkali/utility
 
 go 1.18
 
-retract v1.2.2 // not compatible with go versions 1.18, 1.19, and 1.20
-
 require (
 	github.com/stretchr/testify v1.9.0
 	go.uber.org/mock v0.4.0

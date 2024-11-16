@@ -56,20 +56,14 @@ and it should be noted that `New` in the standard library is equivalent to `erro
 The return values of both `errors.New` and `errors.Newf` follow the `interface{ Unwrap() []error}` and `errors.Tracer` interface.
 
 | standard library errors | utility/errors | Description                  |
-| ----------------------- | -------------- | ---------------------------- |
-| New                     | Error          | identical                    |
+| ----------------------- |----------------| ---------------------------- |
+| New                     | New            | identical                    |
 | Is                      | Is             | identical                    |
 | As                      | As             | identical                    |
 | Unwrap                  | Unwrap         | identical                    |
 | Join                    | Join           | compatible                   |
-| -                       | Newf           | returns error with traceback |
-| -                       | New            | returns error with traceback |
-
-
-
-## Tracer
-
-
+| -                       | Errorf/Newf    | returns error with traceback |
+| -                       | Error          | returns error with traceback |
 
 ### GetTraceback
 

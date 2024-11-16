@@ -81,7 +81,7 @@ func TestExitf(t *testing.T) {
 
 func TestCheckErr(t *testing.T) {
 
-	testError := Error("test error")
+	testError := New("test error")
 	testIError := Newf("with tracer error")
 	output := &bytes.Buffer{}
 

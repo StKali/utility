@@ -11,7 +11,8 @@ var (
 	// Standard error functions from errors package
 	Is     = stderr.Is
 	As     = stderr.As
-	Error  = stderr.New
+	New    = stderr.New
+	Newf   = Errorf
 	Unwrap = stderr.Unwrap
 	// for testing
 	osExit = os.Exit
@@ -32,16 +33,16 @@ var _ error = (*iErr)(nil)
 // Ensure iErr implements the fmt.Formatter interface.
 var _ fmt.Formatter = (*iErr)(nil)
 
-// New creates a new iErr with a single error and a tracer.
-func New(text string) error {
+// Error creates a new iErr with a single error and a tracer.
+func Error(text string) error {
 	return &iErr{
 		errs:   []error{stderr.New(text)},
 		Tracer: GetTrace(3),
 	}
 }
 
-// Newf creates a new iErr with a formatted error message and potentially multiple errors.
-func Newf(format string, a ...any) error {
+// Errorf creates a new iErr with a formatted error message and potentially multiple errors.
+func Errorf(format string, a ...any) error {
 	// Initialize the error and handle cases without additional errors.
 	err := &iErr{}
 	length := len(a)
