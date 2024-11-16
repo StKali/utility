@@ -1,3 +1,6 @@
+## 20241210(v1.3.2)
+- feat(errors): fully compatible with standard errors.
+
 ## 20241014(v1.3.1)
 - feat(errors): add ReplaceExit for testing exit code.
 - docs(errors): update errors README.md

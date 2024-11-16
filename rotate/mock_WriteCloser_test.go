@@ -19,7 +19,6 @@ import (
 type MockWriteCloser struct {
 	ctrl     *gomock.Controller
 	recorder *MockWriteCloserMockRecorder
-	isgomock struct{}
 }
 
 // MockWriteCloserMockRecorder is the mock recorder for MockWriteCloser.
@@ -54,16 +53,16 @@ func (mr *MockWriteCloserMockRecorder) Close() *gomock.Call {
 }
 
 // Write mocks base method.
-func (m *MockWriteCloser) Write(p []byte) (int, error) {
+func (m *MockWriteCloser) Write(arg0 []byte) (int, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Write", p)
+	ret := m.ctrl.Call(m, "Write", arg0)
 	ret0, _ := ret[0].(int)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Write indicates an expected call of Write.
-func (mr *MockWriteCloserMockRecorder) Write(p any) *gomock.Call {
+func (mr *MockWriteCloserMockRecorder) Write(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Write", reflect.TypeOf((*MockWriteCloser)(nil).Write), p)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Write", reflect.TypeOf((*MockWriteCloser)(nil).Write), arg0)
 }

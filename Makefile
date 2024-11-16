@@ -29,7 +29,7 @@ setup:
 	$(GO) mod tidy
 	$(GO) mod download
 	$(PRINT) "successfully installed dependencies."
-	$(GO) install go.uber.org/mock/mockgen@latest
+	$(GO) install go.uber.org/mock/mockgen@v0.4.0
 	$(PRINT) "successfully installed mockgen."
 	$(PRINT) "successfully installed go toolchain."
 
