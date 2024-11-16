@@ -5,6 +5,7 @@ GO			=	@go
 COVER_FILE	=	cover.out
 COVER_HTML	=	coverage.html
 TEMPORARY	=	temporary
+SUPPORT_GO_VERSIONS = 1.18 1.19 1.20 1.21 1.22 1.23
 
 all: test clean
 
@@ -31,5 +32,12 @@ setup:
 	$(GO) install go.uber.org/mock/mockgen@latest
 	$(PRINT) "successfully installed mockgen."
 	$(PRINT) "successfully installed go toolchain."
+
+compatibility_test:
+	@for version in $(SUPPORT_GO_VERSIONS); do \
+  docker run --rm -v $(PWD):/app -e GOPROXY=$(go env GOPROXY) -d golang:$$version sh cd /app && make test; \
+  echo "successfully test for go $$version."; \
+  done \
+
 
 .PHONY: test mock clean env setup
